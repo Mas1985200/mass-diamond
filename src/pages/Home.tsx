@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Search, ShoppingBag, Building2, Store } from "lucide-react";
+import { Search, ShoppingBag, Building2, Store, Home as HomeIcon } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ChatInput } from "@/components/ChatInput";
 import { ConfigRequired } from "@/components/States";
@@ -16,6 +16,7 @@ interface DisplayMessage {
 }
 
 const capabilityButtons = [
+  { key: "capability.home", icon: HomeIcon, route: "/" },
   { key: "capability.search", icon: Search, route: "/search" },
   { key: "capability.marketplace", icon: ShoppingBag, route: "/marketplace" },
   { key: "capability.realEstate", icon: Building2, route: "/real-estate" },
@@ -99,6 +100,12 @@ export default function Home() {
         <div className="flex-1 flex flex-col items-center justify-center gap-6 py-12">
           <Logo size={64} />
           <h1 className="text-2xl font-semibold text-center">{t("chat.heading")}</h1>
+
+          {/* Chat input now sits right under the heading instead of pinned to the bottom */}
+          <div className="w-full max-w-md">
+            <ChatInput onSend={handleSend} sending={sending} />
+          </div>
+
           <div className="grid grid-cols-2 gap-3 w-full max-w-md">
             {capabilityButtons.map(({ key, icon: Icon, route }) => (
               <button
@@ -113,33 +120,35 @@ export default function Home() {
           </div>
         </div>
       ) : (
-        <div className="flex-1 py-6 space-y-4 overflow-y-auto">
-          {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-[85%] rounded-xl2 px-4 py-2.5 text-sm ${
-                  m.role === "user" ? "bg-primary text-background" : "md-panel"
-                }`}
-              >
-                {m.content}
-                {m.capability && m.capability !== "GENERAL_CHAT" && (
-                  <button
-                    onClick={() => navigate(CAPABILITY_ROUTES[m.capability as Exclude<Capability, "GENERAL_CHAT">])}
-                    className="block mt-2 text-xs text-primary hover:underline"
-                  >
-                    Open {m.capability.toLowerCase().replace("_", " ")} results →
-                  </button>
-                )}
+        <>
+          <div className="flex-1 py-6 space-y-4 overflow-y-auto">
+            {messages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-[85%] rounded-xl2 px-4 py-2.5 text-sm ${
+                    m.role === "user" ? "bg-primary text-background" : "md-panel"
+                  }`}
+                >
+                  {m.content}
+                  {m.capability && m.capability !== "GENERAL_CHAT" && (
+                    <button
+                      onClick={() => navigate(CAPABILITY_ROUTES[m.capability as Exclude<Capability, "GENERAL_CHAT">])}
+                      className="block mt-2 text-xs text-primary hover:underline"
+                    >
+                      Open {m.capability.toLowerCase().replace("_", " ")} results →
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
-          {configError && <ConfigRequired label={configError} />}
-        </div>
-      )}
+            ))}
+            {configError && <ConfigRequired label={configError} />}
+          </div>
 
-      <div className="sticky bottom-16 md:bottom-4 py-2 bg-background">
-        <ChatInput onSend={handleSend} sending={sending} />
-      </div>
+          <div className="sticky bottom-16 md:bottom-4 py-2 bg-background">
+            <ChatInput onSend={handleSend} sending={sending} />
+          </div>
+        </>
+      )}
     </div>
   );
 }
