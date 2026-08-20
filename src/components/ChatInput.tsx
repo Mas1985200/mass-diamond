@@ -73,7 +73,7 @@ export function ChatInput({ onSend, sending }: ChatInputProps) {
           }}
           rows={1}
           placeholder={t("chat.placeholder")}
-          className="md-input flex-1 resize-none max-h-32"
+          className="md-input flex-1 min-w-0 resize-none max-h-32"
         />
         <button
           type="button"
