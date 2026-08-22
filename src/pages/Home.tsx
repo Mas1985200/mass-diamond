@@ -95,7 +95,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex flex-col min-h-[calc(100vh-4rem)] max-w-3xl mx-auto w-full px-1">
+    <div className="flex flex-col min-h-[calc(100vh-4rem)] max-w-3xl mx-auto w-full px-0">
       {messages.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-6 py-12">
           <Logo size={64} />
