@@ -121,7 +121,7 @@ export default function Home() {
         </div>
       ) : (
         <>
-          <div className="flex-1 py-6 space-y-4 overflow-y-auto">
+          <div className="flex-1 py-6 space-y-4 overflow-y-auto pb-32">
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
