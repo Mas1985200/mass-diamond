@@ -95,7 +95,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex flex-col min-h-[calc(100vh-4rem)] max-w-2xl mx-auto w-full px-4">
+    <div className="flex flex-col min-h-[calc(100vh-4rem)] max-w-3xl mx-auto w-full px-3">
       {messages.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-6 py-12">
           <Logo size={64} />
@@ -125,7 +125,7 @@ export default function Home() {
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
-                  className={`max-w-[85%] rounded-xl2 px-4 py-2.5 text-sm ${
+                  className={`max-w-[92%] rounded-xl2 px-4 py-2.5 text-sm ${
                     m.role === "user" ? "bg-primary text-background" : "md-panel"
                   }`}
                 >
