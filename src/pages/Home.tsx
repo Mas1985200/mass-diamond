@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Search, ShoppingBag, Building2, Store, Home as HomeIcon } from "lucide-react";
-import { Logo } from "@/components/Logo";
+import { Logo } from "@/components/Logo";  import ReactMarkdown from "react-markdown";
 import { ChatInput } from "@/components/ChatInput";
 import { ConfigRequired } from "@/components/States";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
@@ -135,7 +135,9 @@ export default function Home() {
                     m.role === "user" ? "bg-primary text-background" : "md-panel"
                   }`}
                 >
-                  {m.content}
+                  <div className="prose prose-invert prose-sm max-w-none">
+  <ReactMarkdown>{m.content}</ReactMarkdown>
+</div>
                   {m.capability && m.capability !== "GENERAL_CHAT" && (
                     <button
                       onClick={() => navigate(CAPABILITY_ROUTES[m.capability as Exclude<Capability, "GENERAL_CHAT">])}
