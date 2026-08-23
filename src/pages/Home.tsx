@@ -104,7 +104,7 @@ export default function Home() {
     <div className="flex flex-col min-h-[calc(100vh-4rem)] max-w-3xl mx-auto w-full px-0">
       {messages.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-6 py-12">
-          <Logo size={64} />
+          <Logo size={88} />
           <h1 className="text-2xl font-semibold text-center">{t("chat.heading")}</h1>
 
           {/* Chat input now sits right under the heading instead of pinned to the bottom */}
