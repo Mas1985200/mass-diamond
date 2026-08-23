@@ -8,7 +8,13 @@ import { ConfigRequired } from "@/components/States";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
 import { CAPABILITY_ROUTES, type Capability } from "@/lib/capabilities";
-
+function detectLanguage(text: string): string {
+  const persianArabicPattern = /[\u0600-\u06FF\u0750-\u077F]/;
+  if (persianArabicPattern.test(text)) {
+    return "fa";
+  }
+  return navigator.language.split("-")[0];
+}
 interface DisplayMessage {
   role: "user" | "assistant";
   content: string;
@@ -57,7 +63,7 @@ export default function Home() {
         body: {
           conversation_id: conversationId,
           message: text,
-          language: navigator.language.split("-")[0],
+      language: detectLanguage(text),
           attachment_url: attachmentUrl
         }
       });
