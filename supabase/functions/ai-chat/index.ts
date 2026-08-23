@@ -10,6 +10,8 @@
 // - Logs usage to `ai_usage_logs`.
 // - If no AI provider is configured, returns a clear
 //   CONFIGURATION_REQUIRED response — never a fabricated reply.
+// - If capability is SEARCH and TAVILY_API_KEY is configured, performs
+//   a real web search via Tavily and gives the AI the results to answer from.
 // ==========================================================
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -32,8 +34,6 @@ Deno.serve(async (req) => {
       return json({ error: "Missing Authorization header" }, 401);
     }
 
-    // Client bound to the caller's JWT — respects RLS for reads/writes
-    // the function performs on the user's behalf.
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const userClient = createClient(supabaseUrl, anonKey, {
@@ -56,7 +56,6 @@ Deno.serve(async (req) => {
       return json({ error: "message is required" }, 400);
     }
 
-    // Resolve or create the conversation (RLS-scoped to this user).
     let conversationId = conversation_id as string | undefined;
     if (!conversationId) {
       const { data: conv, error: convErr } = await userClient
@@ -68,7 +67,6 @@ Deno.serve(async (req) => {
       conversationId = conv.id;
     }
 
-    // Persist the user's message first.
     const { error: insertUserMsgErr } = await userClient.from("messages").insert({
       conversation_id: conversationId,
       user_id: user.id,
@@ -96,12 +94,17 @@ Deno.serve(async (req) => {
       throw e;
     }
 
-    // Classify capability, then answer with a capability-aware system prompt.
     const capability: Capability = body.capability ?? (await classifyCapability(provider, message));
 
-    const systemPrompt = buildSystemPrompt(capability, language, body.country, body.city);
+    // If this is a search-intent message and Tavily is configured, run a
+    // real web search and hand the results to the model as context.
+    let searchContext = "";
+    if (capability === "SEARCH") {
+      searchContext = await searchWeb(message);
+    }
 
-    // Pull recent history for context (RLS-scoped).
+    const systemPrompt = buildSystemPrompt(capability, language, body.country, body.city, searchContext);
+
     const { data: history } = await userClient
       .from("messages")
       .select("role, content")
@@ -125,8 +128,6 @@ Deno.serve(async (req) => {
     });
     if (insertAssistantMsgErr) throw insertAssistantMsgErr;
 
-    // Usage logging requires the service role (bypasses RLS by design —
-    // regular users cannot write to ai_usage_logs directly, see 0002).
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (serviceRoleKey) {
       const adminClient = createClient(supabaseUrl, serviceRoleKey);
@@ -152,7 +153,49 @@ Deno.serve(async (req) => {
   }
 });
 
-function buildSystemPrompt(capability: Capability, language?: string, country?: string, city?: string) {
+// Calls Tavily's search API and returns a compact, formatted context
+// block the model can cite from. Returns an empty string (never throws)
+// if the key is missing or the request fails, so search issues never
+// break the chat experience.
+async function searchWeb(query: string): Promise<string> {
+  const apiKey = Deno.env.get("TAVILY_API_KEY");
+  if (!apiKey) return "";
+
+  try {
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        max_results: 5,
+        include_answer: false
+      })
+    });
+
+    if (!res.ok) return "";
+
+    const data = await res.json();
+    const results = (data.results ?? []) as Array<{ title: string; url: string; content: string }>;
+
+    if (results.length === 0) return "";
+
+    return results
+      .map((r, i) => `[${i + 1}] ${r.title}\n${r.url}\n${r.content.slice(0, 400)}`)
+      .join("\n\n");
+  } catch (e) {
+    console.error("Tavily search error:", e);
+    return "";
+  }
+}
+
+function buildSystemPrompt(
+  capability: Capability,
+  language?: string,
+  country?: string,
+  city?: string,
+  searchContext?: string
+) {
   const base = `You are the Mass Diamond assistant, a helpful multilingual assistant for a global marketplace, real estate, and business-directory app. Respond in ${language ?? "the user's language"}. The user is located in ${city ?? "an unspecified city"}, ${country ?? "an unspecified country"}.`;
 
   switch (capability) {
@@ -163,6 +206,9 @@ function buildSystemPrompt(capability: Capability, language?: string, country?: 
     case "BUSINESS":
       return `${base} The user wants to find a local business (restaurant, shop, service). Ask about cuisine/category and location as needed, and explain results come from the platform's verified business directory.`;
     case "SEARCH":
+      if (searchContext) {
+        return `${base} The user has a general search intent. Use the following live web search results to answer accurately and cite sources by their number in brackets, e.g. [1]. If the results don't answer the question, say so honestly.\n\nSearch results:\n${searchContext}`;
+      }
       return `${base} The user has a general search intent. Help them refine their query; explain that live web results depend on a configured search provider.`;
     default:
       return base;
