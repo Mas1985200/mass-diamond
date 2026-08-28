@@ -2,24 +2,14 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Search, ShoppingBag, Building2, Store, Home as HomeIcon } from "lucide-react";
-import { Logo } from "@/components/Logo";  import ReactMarkdown from "react-markdown";
+import { Logo } from "@/components/Logo";
 import { ChatInput } from "@/components/ChatInput";
+import { ChatMessage, type DisplayMessage } from "@/components/ChatMessage";
 import { ConfigRequired } from "@/components/States";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
+import { detectMessageLanguage } from "@/lib/i18n";
 import { CAPABILITY_ROUTES, type Capability } from "@/lib/capabilities";
-function detectLanguage(text: string): string {
-  const persianArabicPattern = /[\u0600-\u06FF\u0750-\u077F]/;
-  if (persianArabicPattern.test(text)) {
-    return "fa";
-  }
-  return navigator.language.split("-")[0];
-}
-interface DisplayMessage {
-  role: "user" | "assistant";
-  content: string;
-  capability?: Capability;
-}
 
 const capabilityButtons = [
   { key: "capability.home", icon: HomeIcon, route: "/" },
@@ -63,7 +53,7 @@ export default function Home() {
         body: {
           conversation_id: conversationId,
           message: text,
-      language: detectLanguage(text),
+          language: detectMessageLanguage(text),
           attachment_url: attachmentUrl
         }
       });
@@ -77,19 +67,16 @@ export default function Home() {
 
       setConversationId(data.conversation_id);
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply, capability: data.capability }]);
-
-      // If the AI classified this as a specific capability, offer a
-      // deep link into that module's real search/browse UI.
-      if (data.capability && data.capability !== "GENERAL_CHAT") {
-        // Left as an in-chat suggestion rather than auto-navigating,
-        // so the user stays in control of leaving the conversation.
-      }
     } catch (err) {
       setConfigError("Something went wrong reaching the Mass Diamond assistant. Please try again.");
       console.error(err);
     } finally {
       setSending(false);
     }
+  }
+
+  function openCapability(capability: Exclude<Capability, "GENERAL_CHAT">) {
+    navigate(CAPABILITY_ROUTES[capability]);
   }
 
   if (!isSupabaseConfigured) {
@@ -129,25 +116,7 @@ export default function Home() {
         <>
           <div className="flex-1 py-6 space-y-4 overflow-y-auto pb-32">
             {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[92%] rounded-xl2 px-4 py-2.5 text-sm ${
-                    m.role === "user" ? "bg-primary text-background" : "md-panel"
-                  }`}
-                >
-                  <div className="prose prose-invert prose-sm max-w-none">
-  <ReactMarkdown>{m.content}</ReactMarkdown>
-</div>
-                  {m.capability && m.capability !== "GENERAL_CHAT" && (
-                    <button
-                      onClick={() => navigate(CAPABILITY_ROUTES[m.capability as Exclude<Capability, "GENERAL_CHAT">])}
-                      className="block mt-2 text-xs text-primary hover:underline"
-                    >
-                      Open {m.capability.toLowerCase().replace("_", " ")} results →
-                    </button>
-                  )}
-                </div>
-              </div>
+              <ChatMessage key={i} message={m} onOpenCapability={openCapability} />
             ))}
             {configError && <ConfigRequired label={configError} />}
           </div>
