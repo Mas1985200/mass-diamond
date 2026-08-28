@@ -349,4 +349,12 @@ i18n
     interpolation: { escapeValue: false }
   });
 
-export default i18n;
+export default i18n; // Detects the language of a single piece of text (e.g. one chat message),
+// so direction/alignment can be decided per-message rather than globally.
+export function detectMessageLanguage(text: string): string {
+  const persianArabicPattern = /[\u0600-\u06FF\u0750-\u077F]/;
+  if (persianArabicPattern.test(text)) {
+    return "fa";
+  }
+  return navigator.language.split("-")[0];
+}
