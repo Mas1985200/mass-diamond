@@ -2,14 +2,388 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import LanguageDetector from "i18next-browser-languagedetector";
 
-// Supported languages per spec section 10. fa/ar are RTL, all others LTR.
-export const SUPPORTED_LANGUAGES = ["en", "fa", "ar", "tr", "fr", "de", "es", "nl", "ru", "ko", "ja", "hi"] as const;
+// Supported languages.
+// fa/ar are RTL. All other supported languages are LTR.
+export const SUPPORTED_LANGUAGES = [
+  "en",
+  "fa",
+  "ar",
+  "tr",
+  "fr",
+  "de",
+  "es",
+  "nl",
+  "ru",
+  "zh",
+  "ko",
+  "ja",
+  "hi"
+] as const;
+
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 export const RTL_LANGUAGES: SupportedLanguage[] = ["fa", "ar"];
 
 export function isRtl(lang: string): boolean {
   return RTL_LANGUAGES.includes(lang as SupportedLanguage);
+}
+
+/**
+ * Detect the language of an individual message.
+ *
+ * Important:
+ * - Local only
+ * - No API call
+ * - Fast
+ * - TypeScript-safe
+ * - Works per message
+ * - Used later by ChatMessage for RTL/LTR
+ *
+ * Script-based languages such as Persian, Arabic, Russian,
+ * Chinese, Japanese, Korean and Hindi can be detected reliably
+ * from Unicode ranges.
+ *
+ * Latin-script languages use lightweight lexical signals.
+ * If there is not enough evidence, the browser language is used
+ * only when it is one of the supported languages. Otherwise English
+ * is used as the final fallback.
+ */
+export function detectMessageLanguage(
+  text: string
+): SupportedLanguage {
+  const normalized = text.trim();
+
+  if (!normalized) {
+    return "en";
+  }
+
+  // ------------------------------------------------------------
+  // Persian
+  // ------------------------------------------------------------
+
+  // Persian-specific characters that are uncommon in standard Arabic.
+  if (/[\u067E\u0686\u0698\u06AF]/.test(normalized)) {
+    return "fa";
+  }
+
+  // Additional Persian orthographic characters.
+  if (/[\u06CC\u06A9\u06C0\u06C1]/.test(normalized)) {
+    return "fa";
+  }
+
+  // ------------------------------------------------------------
+  // Arabic
+  // ------------------------------------------------------------
+
+  if (/[\u0600-\u06FF\u0750-\u077F]/.test(normalized)) {
+    return "ar";
+  }
+
+  // ------------------------------------------------------------
+  // Korean
+  // ------------------------------------------------------------
+
+  if (
+    /[\u1100-\u11FF\u3130-\u318F\uA960-\uA97F\uAC00-\uD7AF\uD7B0-\uD7FF]/.test(
+      normalized
+    )
+  ) {
+    return "ko";
+  }
+
+  // ------------------------------------------------------------
+  // Japanese
+  // ------------------------------------------------------------
+
+  // Hiragana or Katakana is a strong Japanese signal.
+  if (/[\u3040-\u309F\u30A0-\u30FF]/.test(normalized)) {
+    return "ja";
+  }
+
+  // ------------------------------------------------------------
+  // Chinese
+  // ------------------------------------------------------------
+
+  // Han characters without Japanese kana are treated as Chinese.
+  if (/[\u3400-\u4DBF\u4E00-\u9FFF]/.test(normalized)) {
+    return "zh";
+  }
+
+  // ------------------------------------------------------------
+  // Hindi / Devanagari
+  // ------------------------------------------------------------
+
+  if (/[\u0900-\u097F]/.test(normalized)) {
+    return "hi";
+  }
+
+  // ------------------------------------------------------------
+  // Russian / Cyrillic
+  // ------------------------------------------------------------
+
+  if (/[\u0400-\u04FF]/.test(normalized)) {
+    return "ru";
+  }
+
+  // ------------------------------------------------------------
+  // Latin-script language detection
+  // ------------------------------------------------------------
+
+  const lower = normalized.toLocaleLowerCase();
+
+  const scores: Record<SupportedLanguage, number> = {
+    en: 0,
+    fa: 0,
+    ar: 0,
+    tr: 0,
+    fr: 0,
+    de: 0,
+    es: 0,
+    nl: 0,
+    ru: 0,
+    zh: 0,
+    ko: 0,
+    ja: 0,
+    hi: 0
+  };
+
+  const languagePatterns: Record<
+    "en" | "tr" | "fr" | "de" | "es" | "nl",
+    RegExp[]
+  > = {
+    en: [
+      /\bthe\b/,
+      /\band\b/,
+      /\bis\b/,
+      /\bare\b/,
+      /\bthis\b/,
+      /\bthat\b/,
+      /\bwhat\b/,
+      /\bhow\b/,
+      /\bwhere\b/,
+      /\bwhen\b/,
+      /\bwhy\b/,
+      /\bcan\b/,
+      /\bcould\b/,
+      /\bplease\b/,
+      /\bwith\b/,
+      /\bfrom\b/,
+      /\bfor\b/,
+      /\byou\b/,
+      /\byour\b/
+    ],
+
+    tr: [
+      /\bve\b/,
+      /\bbir\b/,
+      /\bbu\b/,
+      /\bben\b/,
+      /\bsen\b/,
+      /\bbiz\b/,
+      /\bsiz\b/,
+      /\bnasıl\b/,
+      /\bne\b/,
+      /\bnerede\b/,
+      /\bnereden\b/,
+      /\bneden\b/,
+      /\bile\b/,
+      /\biçin\b/,
+      /\bdeğil\b/,
+      /\bvar\b/,
+      /\byok\b/,
+      /\bteşekkür\b/,
+      /\bmerhaba\b/
+    ],
+
+    fr: [
+      /\bje\b/,
+      /\bj'ai\b/,
+      /\bj’ai\b/,
+      /\btu\b/,
+      /\bvous\b/,
+      /\bnous\b/,
+      /\ble\b/,
+      /\bles\b/,
+      /\bun\b/,
+      /\bune\b/,
+      /\bet\b/,
+      /\best\b/,
+      /\bavec\b/,
+      /\bpour\b/,
+      /\bcomment\b/,
+      /\bquoi\b/,
+      /\bqui\b/,
+      /\bmerci\b/,
+      /\bbonjour\b/
+    ],
+
+    de: [
+      /\bder\b/,
+      /\bdie\b/,
+      /\bdas\b/,
+      /\bein\b/,
+      /\beine\b/,
+      /\beiner\b/,
+      /\bund\b/,
+      /\bist\b/,
+      /\bnicht\b/,
+      /\bmit\b/,
+      /\bfür\b/,
+      /\bwie\b/,
+      /\bwas\b/,
+      /\bwer\b/,
+      /\bich\b/,
+      /\bdu\b/,
+      /\bdanke\b/,
+      /\bhallo\b/,
+      /\bbitte\b/
+    ],
+
+    es: [
+      /\bel\b/,
+      /\bla\b/,
+      /\blos\b/,
+      /\blas\b/,
+      /\bun\b/,
+      /\buna\b/,
+      /\bunos\b/,
+      /\bunas\b/,
+      /\by\b/,
+      /\bes\b/,
+      /\bson\b/,
+      /\bcon\b/,
+      /\bpara\b/,
+      /\bcómo\b/,
+      /\bqué\b/,
+      /\bqué\b/,
+      /\bquién\b/,
+      /\bgracias\b/,
+      /\bhola\b/
+    ],
+
+    nl: [
+      /\bde\b/,
+      /\bhet\b/,
+      /\been\b/,
+      /\ben\b/,
+      /\bis\b/,
+      /\bmet\b/,
+      /\bvoor\b/,
+      /\bvan\b/,
+      /\bhoe\b/,
+      /\bwat\b/,
+      /\bwaar\b/,
+      /\bwie\b/,
+      /\bniet\b/,
+      /\bdank\b/,
+      /\bbedankt\b/,
+      /\bhallo\b/
+    ]
+  };
+
+  for (const language of Object.keys(languagePatterns) as Array<
+    keyof typeof languagePatterns
+  >) {
+    for (const pattern of languagePatterns[language]) {
+      if (pattern.test(lower)) {
+        scores[language] += 1;
+      }
+    }
+  }
+
+  // Strong language-specific signals.
+
+  // Spanish punctuation.
+  if (/[¿¡]/.test(normalized)) {
+    scores.es += 4;
+  }
+
+  // French contractions and vocabulary.
+  if (
+    /\b(je|j'ai|j’ai|vous|nous|avec|pour|comment|bonjour|merci)\b/i.test(
+      normalized
+    )
+  ) {
+    scores.fr += 3;
+  }
+
+  // German vocabulary and umlaut/ß.
+  if (
+    /[äöüßÄÖÜẞ]/.test(normalized) ||
+    /\b(ich|nicht|danke|hallo|bitte|für)\b/i.test(normalized)
+  ) {
+    scores.de += 3;
+  }
+
+  // Turkish-specific characters and vocabulary.
+  if (
+    /[çğıİöşüÇĞIÖŞÜ]/.test(normalized) ||
+    /\b(ben|sen|merhaba|teşekkür|teşekkürler|nasıl)\b/i.test(normalized)
+  ) {
+    scores.tr += 4;
+  }
+
+  // Dutch-specific signals.
+  if (
+    /\b(het|een|voor|van|waar|niet|bedankt)\b/i.test(normalized)
+  ) {
+    scores.nl += 3;
+  }
+
+  // English-specific signals.
+  if (
+    /\b(the|this|that|you|your|what|how|where|please|could|would)\b/i.test(
+      normalized
+    )
+  ) {
+    scores.en += 3;
+  }
+
+  // Spanish-specific signals.
+  if (
+    /\b(para|cómo|qué|quién|gracias|hola|con|una|unos|unas)\b/i.test(
+      normalized
+    )
+  ) {
+    scores.es += 3;
+  }
+
+  // ------------------------------------------------------------
+  // Find the strongest language
+  // ------------------------------------------------------------
+
+  let bestLanguage: SupportedLanguage = "en";
+  let bestScore = 0;
+
+  for (const language of SUPPORTED_LANGUAGES) {
+    if (scores[language] > bestScore) {
+      bestLanguage = language;
+      bestScore = scores[language];
+    }
+  }
+
+  // ------------------------------------------------------------
+  // Fallback
+  // ------------------------------------------------------------
+
+  if (bestScore === 0) {
+    const browserLanguage =
+      typeof navigator !== "undefined"
+        ? navigator.language.split("-")[0].toLowerCase()
+        : "en";
+
+    if (
+      SUPPORTED_LANGUAGES.includes(
+        browserLanguage as SupportedLanguage
+      )
+    ) {
+      return browserLanguage as SupportedLanguage;
+    }
+
+    return "en";
+  }
+
+  return bestLanguage;
 }
 
 const resources = {
@@ -40,6 +414,7 @@ const resources = {
       "config.searchRequired": "Search provider is not configured."
     }
   },
+
   fa: {
     translation: {
       "app.tagline": "یک اپلیکیشن. همه نیازها. در هر نقطه از جهان.",
@@ -67,6 +442,7 @@ const resources = {
       "config.searchRequired": "سرویس جستجو پیکربندی نشده است."
     }
   },
+
   ar: {
     translation: {
       "app.tagline": "تطبيق واحد. كل الاحتياجات. في أي مكان في العالم.",
@@ -94,6 +470,7 @@ const resources = {
       "config.searchRequired": "لم يتم تكوين مزود البحث."
     }
   },
+
   tr: {
     translation: {
       "app.tagline": "Tek uygulama. Her ihtiyaç. Dünyanın her yerinde.",
@@ -121,6 +498,7 @@ const resources = {
       "config.searchRequired": "Arama sağlayıcısı yapılandırılmamış."
     }
   },
+
   fr: {
     translation: {
       "app.tagline": "Une application. Tous les besoins. Partout dans le monde.",
@@ -148,6 +526,7 @@ const resources = {
       "config.searchRequired": "Le fournisseur de recherche n'est pas configuré."
     }
   },
+
   de: {
     translation: {
       "app.tagline": "Eine App. Jeder Bedarf. Überall auf der Welt.",
@@ -175,6 +554,7 @@ const resources = {
       "config.searchRequired": "Such-Anbieter ist nicht konfiguriert."
     }
   },
+
   es: {
     translation: {
       "app.tagline": "Una app. Cada necesidad. En cualquier parte del mundo.",
@@ -202,6 +582,7 @@ const resources = {
       "config.searchRequired": "El proveedor de búsqueda no está configurado."
     }
   },
+
   nl: {
     translation: {
       "app.tagline": "Eén app. Elke behoefte. Overal ter wereld.",
@@ -229,6 +610,7 @@ const resources = {
       "config.searchRequired": "Zoekprovider is niet geconfigureerd."
     }
   },
+
   ru: {
     translation: {
       "app.tagline": "Одно приложение. Все потребности. В любой точке мира.",
@@ -256,6 +638,35 @@ const resources = {
       "config.searchRequired": "Поставщик поиска не настроен."
     }
   },
+
+  zh: {
+    translation: {
+      "app.tagline": "一个应用，满足所有需求，世界各地随时可用。",
+      "chat.placeholder": "向 Mass Diamond 提问任何问题...",
+      "chat.heading": "我可以怎样帮助您？",
+      "nav.home": "首页",
+      "nav.search": "搜索",
+      "nav.marketplace": "市场",
+      "nav.realEstate": "房地产",
+      "nav.businesses": "商家",
+      "nav.messages": "消息",
+      "nav.notifications": "通知",
+      "nav.profile": "个人资料",
+      "capability.home": "首页",
+      "capability.search": "搜索",
+      "capability.marketplace": "市场",
+      "capability.realEstate": "房地产",
+      "capability.businesses": "商家",
+      "empty.conversations": "暂无对话。",
+      "empty.marketplace": "未找到市场商品。",
+      "empty.properties": "未找到房产。",
+      "empty.businesses": "未找到商家。",
+      "empty.notifications": "暂无通知。",
+      "config.aiRequired": "AI 服务尚未配置。",
+      "config.searchRequired": "搜索服务尚未配置。"
+    }
+  },
+
   ko: {
     translation: {
       "app.tagline": "하나의 앱. 모든 요구. 전 세계 어디서나.",
@@ -283,6 +694,7 @@ const resources = {
       "config.searchRequired": "검색 제공자가 설정되지 않았습니다."
     }
   },
+
   ja: {
     translation: {
       "app.tagline": "1つのアプリ。あらゆるニーズに。世界中どこでも。",
@@ -310,6 +722,7 @@ const resources = {
       "config.searchRequired": "検索プロバイダーが設定されていません。"
     }
   },
+
   hi: {
     translation: {
       "app.tagline": "एक ऐप। हर ज़रूरत। दुनिया में कहीं भी।",
@@ -345,16 +758,10 @@ i18n
   .init({
     resources,
     fallbackLng: "en",
-    supportedLngs: SUPPORTED_LANGUAGES as unknown as string[],
-    interpolation: { escapeValue: false }
+    supportedLngs: [...SUPPORTED_LANGUAGES],
+    interpolation: {
+      escapeValue: false
+    }
   });
 
-export default i18n; // Detects the language of a single piece of text (e.g. one chat message),
-// so direction/alignment can be decided per-message rather than globally.
-export function detectMessageLanguage(text: string): string {
-  const persianArabicPattern = /[\u0600-\u06FF\u0750-\u077F]/;
-  if (persianArabicPattern.test(text)) {
-    return "fa";
-  }
-  return navigator.language.split("-")[0];
-}
+export default i18n;
