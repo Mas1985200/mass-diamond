@@ -8,6 +8,10 @@ export interface DisplayMessage {
   role: "user" | "assistant";
   content: string;
   capability?: Capability;
+  // A local object URL created from the File the user attached, kept
+  // alive for the lifetime of the conversation so the image the user
+  // sent stays visible in their own message bubble after sending.
+  attachmentPreviewUrl?: string;
 }
 
 interface ChatMessageProps {
@@ -32,13 +36,23 @@ export function ChatMessage({ message, onOpenCapability }: ChatMessageProps) {
           rtl ? "text-right" : "text-left"
         } ${isUser ? "bg-primary text-background" : "md-panel"}`}
       >
-        <div
-          className={`chat-markdown ${isUser ? "chat-markdown-user" : "chat-markdown-assistant"}`}
-        >
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {message.content}
-          </ReactMarkdown>
-        </div>
+        {message.attachmentPreviewUrl && (
+          <img
+            src={message.attachmentPreviewUrl}
+            alt="Attachment"
+            className="max-w-full max-h-64 rounded-lg mb-2 object-cover"
+          />
+        )}
+
+        {message.content && (
+          <div
+            className={`chat-markdown ${isUser ? "chat-markdown-user" : "chat-markdown-assistant"}`}
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        )}
 
         {message.capability && message.capability !== "GENERAL_CHAT" && onOpenCapability && (
           <button
