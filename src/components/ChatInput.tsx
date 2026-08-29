@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { Mic, ImagePlus, Send, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -11,21 +11,27 @@ export function ChatInput({ onSend, sending }: ChatInputProps) {
   const { t } = useTranslation();
   const [text, setText] = useState("");
   const [attachment, setAttachment] = useState<File | null>(null);
+  const [recording, setRecording] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function handleSend() {
+    // Guard against double-submission: ignore Enter presses or extra
+    // button clicks that arrive while a previous message is still sending.
+    if (sending) return;
     if (!text.trim() && !attachment) return;
     onSend(text.trim(), attachment ?? undefined);
     setText("");
     setAttachment(null);
   }
 
-  // Voice input: recording UI wired to the voice-stt Edge Function.
-  // Shows a clear configuration-required state if the provider isn't
-  // set (handled by the parent via the returned status), rather than
-  // faking transcription. Kept minimal here — full recorder logic
-  // lives wherever this component is used, to keep this file focused.
-  const [recording, setRecording] = useState(false);
+  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      // Shift+Enter still inserts a newline (default browser behavior);
+      // only a plain Enter triggers sending.
+      e.preventDefault();
+      handleSend();
+    }
+  }
 
   return (
     <div className="md-panel p-3">
@@ -33,7 +39,11 @@ export function ChatInput({ onSend, sending }: ChatInputProps) {
         <div className="mb-2 flex items-center gap-2 text-sm text-text-muted">
           <ImagePlus size={16} />
           <span className="truncate max-w-[200px]">{attachment.name}</span>
-          <button onClick={() => setAttachment(null)} className="text-primary hover:underline">
+          <button
+            onClick={() => setAttachment(null)}
+            disabled={sending}
+            className="text-primary hover:underline disabled:opacity-50"
+          >
             remove
           </button>
         </div>
@@ -49,7 +59,8 @@ export function ChatInput({ onSend, sending }: ChatInputProps) {
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="p-2.5 rounded-full text-text-muted hover:text-primary transition-colors"
+          disabled={sending}
+          className="p-2.5 rounded-full text-text-muted hover:text-primary transition-colors disabled:opacity-40 disabled:pointer-events-none"
           aria-label="Upload image"
         >
           <ImagePlus size={20} />
@@ -57,7 +68,10 @@ export function ChatInput({ onSend, sending }: ChatInputProps) {
         <button
           type="button"
           onClick={() => setRecording((r) => !r)}
-          className={`p-2.5 rounded-full transition-colors ${recording ? "text-primary" : "text-text-muted hover:text-primary"}`}
+          disabled={sending}
+          className={`p-2.5 rounded-full transition-colors disabled:opacity-40 disabled:pointer-events-none ${
+            recording ? "text-primary" : "text-text-muted hover:text-primary"
+          }`}
           aria-label="Voice input"
         >
           <Mic size={20} />
@@ -65,20 +79,16 @@ export function ChatInput({ onSend, sending }: ChatInputProps) {
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
+          onKeyDown={handleKeyDown}
           rows={1}
+          enterKeyHint="send"
           placeholder={t("chat.placeholder")}
           className="md-input flex-1 min-w-0 resize-none max-h-32"
         />
         <button
           type="button"
           onClick={handleSend}
-          disabled={sending}
+          disabled={sending || (!text.trim() && !attachment)}
           className="md-btn-primary p-2.5 rounded-full disabled:opacity-50"
           aria-label="Send"
         >
