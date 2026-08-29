@@ -43,8 +43,17 @@ export default function Home() {
   }, [messages, sending]);
 
   async function handleSend(text: string, attachment?: File) {
-    if (!text) return;
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
+    if (!text && !attachment) return;
+
+    // Keep a local preview of the attached image alive for the lifetime
+    // of this conversation, so the user's own message bubble still shows
+    // the picture they sent, not just its filename or a bare URL.
+    const attachmentPreviewUrl = attachment ? URL.createObjectURL(attachment) : undefined;
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: text, attachmentPreviewUrl }
+    ]);
     setSending(true);
     setConfigError(null);
 
