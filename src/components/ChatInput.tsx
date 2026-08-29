@@ -1,6 +1,7 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import { Mic, ImagePlus, Send, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { AttachmentPreview } from "@/components/AttachmentPreview";
 
 interface ChatInputProps {
   onSend: (message: string, attachment?: File) => void;
@@ -36,17 +37,11 @@ export function ChatInput({ onSend, sending }: ChatInputProps) {
   return (
     <div className="md-panel p-3">
       {attachment && (
-        <div className="mb-2 flex items-center gap-2 text-sm text-text-muted">
-          <ImagePlus size={16} />
-          <span className="truncate max-w-[200px]">{attachment.name}</span>
-          <button
-            onClick={() => setAttachment(null)}
-            disabled={sending}
-            className="text-primary hover:underline disabled:opacity-50"
-          >
-            remove
-          </button>
-        </div>
+        <AttachmentPreview
+          file={attachment}
+          onRemove={() => setAttachment(null)}
+          disabled={sending}
+        />
       )}
       <div className="flex items-end gap-2">
         <input
