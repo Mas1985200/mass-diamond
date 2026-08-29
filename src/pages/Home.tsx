@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Search, ShoppingBag, Building2, Store, Home as HomeIcon } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ChatInput } from "@/components/ChatInput";
 import { ChatMessage, type DisplayMessage } from "@/components/ChatMessage";
+import { TypingIndicator } from "@/components/TypingIndicator";
 import { ConfigRequired } from "@/components/States";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
@@ -31,6 +32,15 @@ export default function Home() {
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to the latest message or the typing indicator, so the
+  // user always sees the current state of the conversation without
+  // manually scrolling — runs whenever a message is added/removed or
+  // the sending (typing indicator) state changes.
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, sending]);
 
   async function handleSend(text: string, attachment?: File) {
     if (!text) return;
@@ -71,6 +81,9 @@ export default function Home() {
       setConfigError("Something went wrong reaching the Mass Diamond assistant. Please try again.");
       console.error(err);
     } finally {
+      // sending is always cleared here, on both success and error, so
+      // TypingIndicator (which is only shown while sending is true) is
+      // removed immediately in either case.
       setSending(false);
     }
   }
@@ -118,7 +131,9 @@ export default function Home() {
             {messages.map((m, i) => (
               <ChatMessage key={i} message={m} onOpenCapability={openCapability} />
             ))}
+            {sending && <TypingIndicator />}
             {configError && <ConfigRequired label={configError} />}
+            <div ref={messagesEndRef} />
           </div>
 
           <div className="sticky bottom-16 md:bottom-4 py-2 bg-background">
