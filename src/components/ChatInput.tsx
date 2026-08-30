@@ -7,6 +7,7 @@ import {
   Music,
   Send,
   Loader2,
+  Mic,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -26,6 +27,7 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [recording, setRecording] = useState(false);
 
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -34,18 +36,11 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
 
-  /*
-   * Keep the latest attachments available to the unmount cleanup.
-   * This prevents stale-state cleanup from leaking object URLs.
-   */
+  // Keep the latest attachments available for unmount cleanup.
   const attachmentsRef = useRef<ChatAttachment[]>([]);
   attachmentsRef.current = attachments;
 
-  /*
-   * Release object URLs when the component is unmounted.
-   * Sent attachments are intentionally kept alive by the parent message state
-   * until the conversation is discarded.
-   */
+  // Release object URLs for attachments still owned by ChatInput.
   useEffect(() => {
     return () => {
       attachmentsRef.current.forEach((attachment) => {
@@ -54,9 +49,7 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
     };
   }, []);
 
-  /*
-   * Close the attachment menu when the user clicks outside it.
-   */
+  // Close Attach menu when clicking outside.
   useEffect(() => {
     if (!menuOpen) return;
 
@@ -79,22 +72,20 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
     };
   }, [menuOpen]);
 
-  /*
-   * Close the attachment menu with Escape.
-   */
+  // Close Attach menu with Escape.
   useEffect(() => {
     if (!menuOpen) return;
 
-    function handleKeyDown(event: globalThis.KeyboardEvent) {
+    function handleEscape(event: globalThis.KeyboardEvent) {
       if (event.key === "Escape") {
         setMenuOpen(false);
       }
     }
 
-    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", handleEscape);
 
     return () => {
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keydown", handleEscape);
     };
   }, [menuOpen]);
 
@@ -133,10 +124,8 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
 
     if (!trimmedText && attachments.length === 0) return;
 
-    /*
-     * Ownership of the attachment objects is transferred to the parent.
-     * Therefore we intentionally DO NOT revoke their object URLs here.
-     */
+    // Ownership of attachments transfers to the parent message state.
+    // Their object URLs must therefore NOT be revoked here.
     onSend(trimmedText, attachments);
 
     setText("");
@@ -151,30 +140,34 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
     handleSend();
   }
 
+  function toggleRecording() {
+    if (sending) return;
+
+    // Voice recording/STT is intentionally not implemented yet.
+    // This preserves the existing microphone UI until the Voice phase.
+    setRecording((current) => !current);
+  }
+
   const attachMenuOptions = [
     {
       label: "Photo",
       icon: ImagePlus,
       inputRef: imageInputRef,
-      accept: "image/*",
     },
     {
       label: "Video",
       icon: Video,
       inputRef: videoInputRef,
-      accept: "video/*",
     },
     {
       label: "File",
       icon: FileText,
       inputRef: fileInputRef,
-      accept: undefined,
     },
     {
       label: "Audio",
       icon: Music,
       inputRef: audioInputRef,
-      accept: "audio/*",
     },
   ] as const;
 
@@ -183,6 +176,7 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
 
   return (
     <div className="md-panel p-3">
+      {/* Selected attachment previews */}
       {attachments.length > 0 && (
         <div
           className="flex flex-wrap mb-1"
@@ -200,7 +194,7 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
       )}
 
       <div className="flex items-end gap-2">
-        {/* Hidden attachment inputs */}
+        {/* Hidden file inputs */}
         <input
           ref={imageInputRef}
           type="file"
@@ -236,7 +230,7 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
           onChange={(event) => addFiles(event.target.files)}
         />
 
-        {/* Attach menu */}
+        {/* Attach button + menu */}
         <div ref={menuRef} className="relative">
           <button
             type="button"
@@ -244,7 +238,7 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
             aria-label="Attach"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
+            onClick={() => setMenuOpen((current) => !current)}
             className="p-2.5 rounded-full text-text-muted hover:text-primary transition-colors disabled:opacity-40 disabled:pointer-events-none"
           >
             <Plus
@@ -283,7 +277,23 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
           )}
         </div>
 
-        {/* Message input */}
+        {/* Microphone */}
+        <button
+          type="button"
+          onClick={toggleRecording}
+          disabled={sending}
+          aria-label="Voice input"
+          aria-pressed={recording}
+          className={`p-2.5 rounded-full transition-colors disabled:opacity-40 disabled:pointer-events-none ${
+            recording
+              ? "text-primary"
+              : "text-text-muted hover:text-primary"
+          }`}
+        >
+          <Mic size={20} />
+        </button>
+
+        {/* Text input */}
         <textarea
           value={text}
           onChange={(event) => setText(event.target.value)}
@@ -296,7 +306,7 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
           className="md-input flex-1 min-w-0 resize-none max-h-32 disabled:opacity-60"
         />
 
-        {/* Send */}
+        {/* Send button */}
         <button
           type="button"
           onClick={handleSend}
