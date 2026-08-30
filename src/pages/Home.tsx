@@ -1,7 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Search, ShoppingBag, Building2, Store, Home as HomeIcon } from "lucide-react";
+import {
+  Search,
+  ShoppingBag,
+  Building2,
+  Store,
+  Home as HomeIcon,
+} from "lucide-react";
+
 import { Logo } from "@/components/Logo";
 import { ChatInput } from "@/components/ChatInput";
 import { ChatMessage, type DisplayMessage } from "@/components/ChatMessage";
@@ -10,199 +17,503 @@ import { ConfigRequired } from "@/components/States";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
 import { detectMessageLanguage } from "@/lib/i18n";
-import { CAPABILITY_ROUTES, type Capability } from "@/lib/capabilities";
+import {
+  CAPABILITY_ROUTES,
+  type Capability,
+} from "@/lib/capabilities";
+import type { ChatAttachment } from "@/components/AttachmentPreview";
 
 const capabilityButtons = [
-  { key: "capability.home", icon: HomeIcon, route: "/" },
-  { key: "capability.search", icon: Search, route: "/search" },
-  { key: "capability.marketplace", icon: ShoppingBag, route: "/marketplace" },
-  { key: "capability.realEstate", icon: Building2, route: "/real-estate" },
-  { key: "capability.businesses", icon: Store, route: "/businesses" }
+  {
+    key: "capability.home",
+    icon: HomeIcon,
+    route: "/",
+  },
+  {
+    key: "capability.search",
+    icon: Search,
+    route: "/search",
+  },
+  {
+    key: "capability.marketplace",
+    icon: ShoppingBag,
+    route: "/marketplace",
+  },
+  {
+    key: "capability.realEstate",
+    icon: Building2,
+    route: "/real-estate",
+  },
+  {
+    key: "capability.businesses",
+    icon: Store,
+    route: "/businesses",
+  },
 ] as const;
 
-// This is the first screen after login, per spec section 2.
-// The AI classifies intent server-side (ai-chat Edge Function) and
-// routes the user toward the right module — the user never needs to
-// pick a module manually unless they want to.
+type SendResult =
+  | {
+      ok: true;
+      conversationId?: string;
+      reply: string;
+      capability?: Capability;
+    }
+  | {
+      ok: false;
+      configurationRequired?: boolean;
+      message?: string;
+      error?: unknown;
+    };
+
 export default function Home() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { session } = useAuth();
+
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
-  const [conversationId, setConversationId] = useState<string | undefined>();
+  const [conversationId, setConversationId] = useState<string>();
   const [sending, setSending] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Hard, synchronous lock against concurrent sends. React state (`sending`)
-  // updates are batched/async, so relying on it alone leaves a small window
-  // where two calls to performSend could both pass the check before either
-  // state update is applied. This ref is checked and set synchronously at
-  // the very top of performSend, so it can never be bypassed regardless of
-  // which caller (initial send or retry) triggers it.
+  /*
+   * This ref is deliberately used only as a synchronous lock.
+   * Unlike React state, ref mutation is immediate, which prevents
+   * two sends/retries from entering performSend at the same time.
+   */
   const sendingRef = useRef(false);
 
-  // Auto-scroll to the latest message or the typing indicator, so the
-  // user always sees the current state of the conversation without
-  // manually scrolling — runs whenever a message is added/removed or
-  // the sending (typing indicator) state changes.
+  /*
+   * Keep the latest conversation id available to async callbacks
+   * without making the send pipeline depend on a stale render snapshot.
+   */
+  const conversationIdRef = useRef<string | undefined>(undefined);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
+
+  /*
+   * Scroll to the newest message or typing indicator.
+   */
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
   }, [messages, sending]);
 
-  // Shared by both the initial send and Retry: performs the actual
-  // upload + ai-chat call for a given (already-existing) user message id,
-  // and updates that exact message's status on success/failure — never
-  // just "the last message", so this stays correct even if messages are
-  // reordered or multiple sends are pending in the future.
-  async function performSend(id: string, text: string, attachment?: File) {
-    if (sendingRef.current) return;
-    sendingRef.current = true;
-    setSending(true);
-    setConfigError(null);
-
-    try {
-      let attachmentUrl: string | undefined;
-      if (attachment && session) {
-        const path = `${session.user.id}/${crypto.randomUUID()}-${attachment.name}`;
-        const { error: uploadErr } = await supabase.storage.from("chat-attachments").upload(path, attachment);
-        if (!uploadErr) {
-          const { data } = supabase.storage.from("chat-attachments").getPublicUrl(path);
-          attachmentUrl = data.publicUrl;
-        }
+  /*
+   * Upload every selected attachment.
+   *
+   * The current backend contract still accepts only one attachment_url,
+   * so every file is uploaded, but only the first successful public URL
+   * is forwarded to ai-chat.
+   */
+  const uploadAttachments = useCallback(
+    async (
+      attachments: ChatAttachment[],
+    ): Promise<{
+      firstUrl?: string;
+      failedCount: number;
+    }> => {
+      if (attachments.length === 0) {
+        return {
+          firstUrl: undefined,
+          failedCount: 0,
+        };
       }
 
-      const { data, error } = await supabase.functions.invoke("ai-chat", {
-        body: {
-          conversation_id: conversationId,
-          message: text,
-          language: detectMessageLanguage(text),
-          attachment_url: attachmentUrl
+      if (!session) {
+        throw new Error("User session is not available.");
+      }
+
+      const results = await Promise.all(
+        attachments.map(async (attachment) => {
+          const safeName =
+            attachment.file.name.replace(/[^\w.\-() ]+/g, "_") ||
+            "attachment";
+
+          const path = `${session.user.id}/${crypto.randomUUID()}-${safeName}`;
+
+          const { error } = await supabase.storage
+            .from("chat-attachments")
+            .upload(path, attachment.file, {
+              cacheControl: "3600",
+              upsert: false,
+              contentType: attachment.file.type || undefined,
+            });
+
+          if (error) {
+            console.error(
+              "Attachment upload failed:",
+              attachment.file.name,
+              error,
+            );
+
+            return {
+              url: undefined,
+              failed: true,
+            };
+          }
+
+          const { data } = supabase.storage
+            .from("chat-attachments")
+            .getPublicUrl(path);
+
+          return {
+            url: data.publicUrl,
+            failed: false,
+          };
+        }),
+      );
+
+      return {
+        firstUrl: results.find(
+          (result): result is { url: string; failed: false } =>
+            Boolean(result.url) && !result.failed,
+        )?.url,
+        failedCount: results.filter((result) => result.failed).length,
+      };
+    },
+    [session],
+  );
+
+  /*
+   * Performs the complete send pipeline for one existing user message.
+   *
+   * Responsibilities:
+   * 1. Acquire synchronous send lock.
+   * 2. Upload attachments.
+   * 3. Invoke ai-chat.
+   * 4. Mark the exact user message as sent/error.
+   * 5. Append exactly one assistant response.
+   * 6. Release the lock in finally.
+   */
+  const performSend = useCallback(
+    async (
+      messageId: string,
+      text: string,
+      attachments: ChatAttachment[],
+    ): Promise<SendResult> => {
+      if (sendingRef.current) {
+        return {
+          ok: false,
+        };
+      }
+
+      sendingRef.current = true;
+      setSending(true);
+      setConfigError(null);
+
+      try {
+        let attachmentUrl: string | undefined;
+
+        if (attachments.length > 0) {
+          const uploadResult = await uploadAttachments(attachments);
+
+          attachmentUrl = uploadResult.firstUrl;
+
+          /*
+           * Do not block the entire message if one attachment fails.
+           * The current backend contract only needs the first successful
+           * attachment URL.
+           */
         }
-      });
 
-      if (error) throw error;
+        const { data, error } = await supabase.functions.invoke(
+          "ai-chat",
+          {
+            body: {
+              conversation_id: conversationIdRef.current,
+              message: text,
+              language: detectMessageLanguage(text),
+              attachment_url: attachmentUrl,
+            },
+          },
+        );
 
-      if (data.status === "CONFIGURATION_REQUIRED") {
-        setConfigError(data.message);
-        // The message must not stay stuck in "sending" — mark it as
-        // "error" so Retry becomes available instead of the UI looking frozen.
-        setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, status: "error" } : m)));
+        if (error) {
+          throw error;
+        }
+
+        if (!data) {
+          throw new Error("Empty response received from ai-chat.");
+        }
+
+        if (data.status === "CONFIGURATION_REQUIRED") {
+          const message =
+            typeof data.message === "string"
+              ? data.message
+              : "AI service configuration is required.";
+
+          setConfigError(message);
+
+          setMessages((current) =>
+            current.map((item) =>
+              item.id === messageId
+                ? {
+                    ...item,
+                    status: "error",
+                  }
+                : item,
+            ),
+          );
+
+          return {
+            ok: false,
+            configurationRequired: true,
+            message,
+          };
+        }
+
+        if (typeof data.reply !== "string") {
+          throw new Error("Invalid response: assistant reply is missing.");
+        }
+
+        const nextConversationId =
+          typeof data.conversation_id === "string"
+            ? data.conversation_id
+            : conversationIdRef.current;
+
+        conversationIdRef.current = nextConversationId;
+        setConversationId(nextConversationId);
+
+        setMessages((current) => {
+          const updated = current.map((item) =>
+            item.id === messageId
+              ? {
+                  ...item,
+                  status: "sent" as const,
+                }
+              : item,
+          );
+
+          return [
+            ...updated,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant" as const,
+              content: data.reply,
+              capability:
+                typeof data.capability === "string"
+                  ? data.capability
+                  : undefined,
+            },
+          ];
+        });
+
+        return {
+          ok: true,
+          conversationId: nextConversationId,
+          reply: data.reply,
+          capability:
+            typeof data.capability === "string"
+              ? data.capability
+              : undefined,
+        };
+      } catch (error) {
+        console.error("Chat send failed:", error);
+
+        setMessages((current) =>
+          current.map((item) =>
+            item.id === messageId
+              ? {
+                  ...item,
+                  status: "error",
+                }
+              : item,
+          ),
+        );
+
+        return {
+          ok: false,
+          error,
+        };
+      } finally {
+        sendingRef.current = false;
+        setSending(false);
+      }
+    },
+    [uploadAttachments],
+  );
+
+  /*
+   * Initial message send.
+   */
+  const handleSend = useCallback(
+    (text: string, attachments: ChatAttachment[]) => {
+      if (sendingRef.current) {
         return;
       }
 
-      setConversationId(data.conversation_id);
-      setMessages((prev) => {
-        const updated = prev.map((m) => (m.id === id ? { ...m, status: "sent" as const } : m));
-        // The assistant reply is appended exactly once, right after the
-        // user message it answers, inside this same state update.
-        return [
-          ...updated,
-          { id: crypto.randomUUID(), role: "assistant" as const, content: data.reply, capability: data.capability }
-        ];
-      });
-    } catch (err) {
-      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, status: "error" } : m)));
-      console.error(err);
-    } finally {
-      // sending is always cleared here, on both success and error, so
-      // TypingIndicator (which is only shown while sending is true) is
-      // removed immediately in either case, and the lock is released.
-      sendingRef.current = false;
-      setSending(false);
-    }
-  }
+      const trimmedText = text.trim();
 
-  function handleSend(text: string, attachment?: File) {
-    if (sendingRef.current) return;
-    if (!text && !attachment) return;
+      if (!trimmedText && attachments.length === 0) {
+        return;
+      }
 
-    const id = crypto.randomUUID();
-    // Keep a local preview of the attached image alive for the lifetime
-    // of this conversation, so the user's own message bubble still shows
-    // the picture they sent, not just its filename or a bare URL.
-    const attachmentPreviewUrl = attachment ? URL.createObjectURL(attachment) : undefined;
+      const messageId = crypto.randomUUID();
 
-    setMessages((prev) => [
-      ...prev,
-      { id, role: "user", content: text, status: "sending", attachment, attachmentPreviewUrl }
-    ]);
+      /*
+       * The exact ChatAttachment objects are stored directly.
+       * No reconstruction means previewUrl/File references remain stable.
+       */
+      setMessages((current) => [
+        ...current,
+        {
+          id: messageId,
+          role: "user",
+          content: trimmedText,
+          status: "sending",
+          attachments,
+        },
+      ]);
 
-    performSend(id, text, attachment);
-  }
+      void performSend(messageId, trimmedText, attachments);
+    },
+    [performSend],
+  );
 
-  function retryMessage(id: string) {
-    // Guard against retrying while another send is already in flight.
-    if (sendingRef.current) return;
-    const message = messages.find((m) => m.id === id);
-    if (!message) return;
+  /*
+   * Retry the exact failed message.
+   *
+   * The original ChatAttachment objects are reused so the same File
+   * objects and preview URLs remain available.
+   */
+  const retryMessage = useCallback(
+    (messageId: string) => {
+      if (sendingRef.current) {
+        return;
+      }
 
-    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, status: "sending" } : m)));
-    // Re-send the exact same text and the exact same File object — the
-    // attachmentPreviewUrl is intentionally left untouched, so the image
-    // preview never flickers or disappears during a retry.
-    performSend(id, message.content, message.attachment);
-  }
+      const message = messages.find(
+        (item) => item.id === messageId,
+      );
 
-  function openCapability(capability: Exclude<Capability, "GENERAL_CHAT">) {
-    navigate(CAPABILITY_ROUTES[capability]);
-  }
+      if (!message || message.role !== "user") {
+        return;
+      }
 
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === messageId
+            ? {
+                ...item,
+                status: "sending",
+              }
+            : item,
+        ),
+      );
+
+      void performSend(
+        messageId,
+        message.content,
+        message.attachments ?? [],
+      );
+    },
+    [messages, performSend],
+  );
+
+  const openCapability = useCallback(
+    (capability: Exclude<Capability, "GENERAL_CHAT">) => {
+      const route = CAPABILITY_ROUTES[capability];
+
+      if (route) {
+        navigate(route);
+      }
+    },
+    [navigate],
+  );
+
+  /*
+   * Supabase configuration guard.
+   */
   if (!isSupabaseConfigured) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh]">
-        <ConfigRequired label="Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY." />
+      <div className="flex min-h-[70vh] flex-col items-center justify-center px-4">
+        <ConfigRequired
+          label="Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY."
+        />
       </div>
     );
   }
 
-  return (
-    <div className="flex flex-col min-h-[calc(100vh-4rem)] max-w-3xl mx-auto w-full px-0">
-      {messages.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-6 py-12">
+  /*
+   * Empty state / first screen.
+   */
+  if (messages.length === 0) {
+    return (
+      <div className="flex min-h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-0 mx-auto">
+        <div className="flex flex-1 flex-col items-center justify-center gap-6 py-12">
           <Logo size={88} />
-          <h1 className="text-2xl font-semibold text-center">{t("chat.heading")}</h1>
 
-          {/* Chat input now sits right under the heading instead of pinned to the bottom */}
+          <h1 className="text-center text-2xl font-semibold">
+            {t("chat.heading")}
+          </h1>
+
           <div className="w-full max-w-md">
-            <ChatInput onSend={handleSend} sending={sending} />
+            <ChatInput
+              onSend={handleSend}
+              sending={sending}
+            />
           </div>
 
-          <div className="grid grid-cols-2 gap-3 w-full max-w-md">
-            {capabilityButtons.map(({ key, icon: Icon, route }) => (
-              <button
-                key={key}
-                onClick={() => navigate(route)}
-                className="md-panel flex items-center gap-2 px-4 py-3 text-sm hover:border-primary/50 transition-colors"
-              >
-                <Icon size={18} className="text-primary" />
-                {t(key)}
-              </button>
-            ))}
+          <div className="grid w-full max-w-md grid-cols-2 gap-3">
+            {capabilityButtons.map(
+              ({ key, icon: Icon, route }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => navigate(route)}
+                  className="md-panel flex items-center gap-2 px-4 py-3 text-sm transition-colors hover:border-primary/50"
+                >
+                  <Icon
+                    size={18}
+                    className="text-primary"
+                  />
+                  <span>{t(key)}</span>
+                </button>
+              ),
+            )}
           </div>
         </div>
-      ) : (
-        <>
-          <div className="flex-1 py-6 space-y-4 overflow-y-auto pb-32">
-            {messages.map((m) => (
-              <ChatMessage
-                key={m.id}
-                message={m}
-                onOpenCapability={openCapability}
-                onRetry={retryMessage}
-                sending={sending}
-              />
-            ))}
-            {sending && <TypingIndicator />}
-            {configError && <ConfigRequired label={configError} />}
-            <div ref={messagesEndRef} />
-          </div>
+      </div>
+    );
+  }
 
-          <div className="sticky bottom-16 md:bottom-4 py-2 bg-background">
-            <ChatInput onSend={handleSend} sending={sending} />
-          </div>
-        </>
-      )}
+  /*
+   * Active conversation.
+   */
+  return (
+    <div className="flex min-h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-0 mx-auto">
+      <div className="flex-1 space-y-4 overflow-y-auto py-6 pb-32">
+        {messages.map((message) => (
+          <ChatMessage
+            key={message.id}
+            message={message}
+            onOpenCapability={openCapability}
+            onRetry={retryMessage}
+            sending={sending}
+          />
+        ))}
+
+        {sending && <TypingIndicator />}
+
+        {configError && (
+          <ConfigRequired label={configError} />
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="sticky bottom-16 bg-background py-2 md:bottom-4">
+        <ChatInput
+          onSend={handleSend}
+          sending={sending}
+        />
+      </div>
     </div>
   );
 }
