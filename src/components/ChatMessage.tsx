@@ -1,29 +1,47 @@
 import type { ComponentProps } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useTranslation } from "react-i18next";
 import { detectMessageLanguage, isRtl } from "@/lib/i18n";
 import type { Capability } from "@/lib/capabilities";
 
 export interface DisplayMessage {
+  // Stable, unique identifier for this message. Retry always targets
+  // this exact message by id, never "the last message in the list" —
+  // so retry stays correct even if the conversation structure changes
+  // later (e.g. reordering, filtering, multiple pending messages).
+  id: string;
   role: "user" | "assistant";
   content: string;
   capability?: Capability;
-  // A local object URL created from the File the user attached, kept
-  // alive for the lifetime of the conversation so the image the user
-  // sent stays visible in their own message bubble after sending.
+  // Only ever set on user messages: lets a failed send be retried with
+  // the exact same text/attachment, and reflects current send state.
+  status?: "sending" | "sent" | "error";
+  // The original File the user attached, kept in memory so Retry can
+  // re-upload the same file without asking the user to re-select it.
+  attachment?: File;
+  // A local object URL created from that File, kept alive for the
+  // lifetime of the conversation so the image the user sent stays
+  // visible in their own message bubble after sending — and is NOT
+  // regenerated on retry, so the preview never flickers or disappears.
   attachmentPreviewUrl?: string;
 }
 
 interface ChatMessageProps {
   message: DisplayMessage;
   onOpenCapability?: (capability: Exclude<Capability, "GENERAL_CHAT">) => void;
+  onRetry?: (id: string) => void;
+  // Disables the Retry button while any send is in flight, so a retry
+  // can't be triggered concurrently with another in-progress send.
+  sending?: boolean;
 }
 
 // Renders a single chat bubble. The bubble's side (left/right) follows the
 // standard chat convention based on role, but the text direction and
 // alignment inside the bubble are based on the actual language of that
 // message's content — not a single fixed app-wide direction.
-export function ChatMessage({ message, onOpenCapability }: ChatMessageProps) {
+export function ChatMessage({ message, onOpenCapability, onRetry, sending }: ChatMessageProps) {
+  const { t } = useTranslation();
   const lang = detectMessageLanguage(message.content);
   const rtl = isRtl(lang);
   const isUser = message.role === "user";
@@ -34,7 +52,9 @@ export function ChatMessage({ message, onOpenCapability }: ChatMessageProps) {
         dir={rtl ? "rtl" : "ltr"}
         className={`max-w-[92%] rounded-xl2 px-4 py-3 text-[15px] leading-relaxed ${
           rtl ? "text-right" : "text-left"
-        } ${isUser ? "bg-primary text-background" : "md-panel"}`}
+        } ${isUser ? "bg-primary text-background" : "md-panel"} ${
+          message.status === "error" ? "opacity-70" : ""
+        }`}
       >
         {message.attachmentPreviewUrl && (
           <img
@@ -51,6 +71,23 @@ export function ChatMessage({ message, onOpenCapability }: ChatMessageProps) {
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
               {message.content}
             </ReactMarkdown>
+          </div>
+        )}
+
+        {message.status === "error" && (
+          <div
+            dir={rtl ? "rtl" : "ltr"}
+            className="mt-2 flex items-center gap-2 text-xs text-red-200"
+          >
+            <span>{t("chat.error")}</span>
+            <button
+              type="button"
+              onClick={() => onRetry?.(message.id)}
+              disabled={sending}
+              className="underline hover:no-underline disabled:opacity-50 disabled:pointer-events-none font-medium"
+            >
+              {t("chat.retry")}
+            </button>
           </div>
         )}
 
