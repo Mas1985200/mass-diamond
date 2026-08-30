@@ -27,12 +27,20 @@ const capabilityButtons = [
 export default function Home() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { session, configured } = useAuth();
+  const { session } = useAuth();
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Hard, synchronous lock against concurrent sends. React state (`sending`)
+  // updates are batched/async, so relying on it alone leaves a small window
+  // where two calls to performSend could both pass the check before either
+  // state update is applied. This ref is checked and set synchronously at
+  // the very top of performSend, so it can never be bypassed regardless of
+  // which caller (initial send or retry) triggers it.
+  const sendingRef = useRef(false);
 
   // Auto-scroll to the latest message or the typing indicator, so the
   // user always sees the current state of the conversation without
@@ -42,18 +50,14 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, sending]);
 
-  async function handleSend(text: string, attachment?: File) {
-    if (!text && !attachment) return;
-
-    // Keep a local preview of the attached image alive for the lifetime
-    // of this conversation, so the user's own message bubble still shows
-    // the picture they sent, not just its filename or a bare URL.
-    const attachmentPreviewUrl = attachment ? URL.createObjectURL(attachment) : undefined;
-
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: text, attachmentPreviewUrl }
-    ]);
+  // Shared by both the initial send and Retry: performs the actual
+  // upload + ai-chat call for a given (already-existing) user message id,
+  // and updates that exact message's status on success/failure — never
+  // just "the last message", so this stays correct even if messages are
+  // reordered or multiple sends are pending in the future.
+  async function performSend(id: string, text: string, attachment?: File) {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     setSending(true);
     setConfigError(null);
 
@@ -81,20 +85,63 @@ export default function Home() {
 
       if (data.status === "CONFIGURATION_REQUIRED") {
         setConfigError(data.message);
+        // The message must not stay stuck in "sending" — mark it as
+        // "error" so Retry becomes available instead of the UI looking frozen.
+        setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, status: "error" } : m)));
         return;
       }
 
       setConversationId(data.conversation_id);
-      setMessages((prev) => [...prev, { role: "assistant", content: data.reply, capability: data.capability }]);
+      setMessages((prev) => {
+        const updated = prev.map((m) => (m.id === id ? { ...m, status: "sent" as const } : m));
+        // The assistant reply is appended exactly once, right after the
+        // user message it answers, inside this same state update.
+        return [
+          ...updated,
+          { id: crypto.randomUUID(), role: "assistant" as const, content: data.reply, capability: data.capability }
+        ];
+      });
     } catch (err) {
-      setConfigError("Something went wrong reaching the Mass Diamond assistant. Please try again.");
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, status: "error" } : m)));
       console.error(err);
     } finally {
       // sending is always cleared here, on both success and error, so
       // TypingIndicator (which is only shown while sending is true) is
-      // removed immediately in either case.
+      // removed immediately in either case, and the lock is released.
+      sendingRef.current = false;
       setSending(false);
     }
+  }
+
+  function handleSend(text: string, attachment?: File) {
+    if (sendingRef.current) return;
+    if (!text && !attachment) return;
+
+    const id = crypto.randomUUID();
+    // Keep a local preview of the attached image alive for the lifetime
+    // of this conversation, so the user's own message bubble still shows
+    // the picture they sent, not just its filename or a bare URL.
+    const attachmentPreviewUrl = attachment ? URL.createObjectURL(attachment) : undefined;
+
+    setMessages((prev) => [
+      ...prev,
+      { id, role: "user", content: text, status: "sending", attachment, attachmentPreviewUrl }
+    ]);
+
+    performSend(id, text, attachment);
+  }
+
+  function retryMessage(id: string) {
+    // Guard against retrying while another send is already in flight.
+    if (sendingRef.current) return;
+    const message = messages.find((m) => m.id === id);
+    if (!message) return;
+
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, status: "sending" } : m)));
+    // Re-send the exact same text and the exact same File object — the
+    // attachmentPreviewUrl is intentionally left untouched, so the image
+    // preview never flickers or disappears during a retry.
+    performSend(id, message.content, message.attachment);
   }
 
   function openCapability(capability: Exclude<Capability, "GENERAL_CHAT">) {
@@ -137,8 +184,14 @@ export default function Home() {
       ) : (
         <>
           <div className="flex-1 py-6 space-y-4 overflow-y-auto pb-32">
-            {messages.map((m, i) => (
-              <ChatMessage key={i} message={m} onOpenCapability={openCapability} />
+            {messages.map((m) => (
+              <ChatMessage
+                key={m.id}
+                message={m}
+                onOpenCapability={openCapability}
+                onRetry={retryMessage}
+                sending={sending}
+              />
             ))}
             {sending && <TypingIndicator />}
             {configError && <ConfigRequired label={configError} />}
