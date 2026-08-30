@@ -4,101 +4,205 @@ import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
 import { detectMessageLanguage, isRtl } from "@/lib/i18n";
 import type { Capability } from "@/lib/capabilities";
+import {
+  AttachmentPreview,
+  type ChatAttachment,
+} from "@/components/AttachmentPreview";
 
 export interface DisplayMessage {
-  // Stable, unique identifier for this message. Retry always targets
-  // this exact message by id, never "the last message in the list" —
-  // so retry stays correct even if the conversation structure changes
-  // later (e.g. reordering, filtering, multiple pending messages).
+  /**
+   * Stable unique identifier for this message.
+   * Retry always targets this exact message.
+   */
   id: string;
+
   role: "user" | "assistant";
+
   content: string;
+
+  /**
+   * Capability detected by the AI for assistant messages.
+   */
   capability?: Capability;
-  // Only ever set on user messages: lets a failed send be retried with
-  // the exact same text/attachment, and reflects current send state.
+
+  /**
+   * Sending state is used only by user messages.
+   */
   status?: "sending" | "sent" | "error";
-  // The original File the user attached, kept in memory so Retry can
-  // re-upload the same file without asking the user to re-select it.
-  attachment?: File;
-  // A local object URL created from that File, kept alive for the
-  // lifetime of the conversation so the image the user sent stays
-  // visible in their own message bubble after sending — and is NOT
-  // regenerated on retry, so the preview never flickers or disappears.
-  attachmentPreviewUrl?: string;
+
+  /**
+   * Attachments belong to the message itself.
+   *
+   * The exact ChatAttachment objects created by ChatInput are preserved
+   * so File references and object URLs remain stable for:
+   * - message previews
+   * - retries
+   * - subsequent UI renders
+   */
+  attachments?: ChatAttachment[];
 }
 
 interface ChatMessageProps {
   message: DisplayMessage;
-  onOpenCapability?: (capability: Exclude<Capability, "GENERAL_CHAT">) => void;
+
+  /**
+   * Opens the application module associated with an AI capability.
+   */
+  onOpenCapability?: (
+    capability: Exclude<Capability, "GENERAL_CHAT">,
+  ) => void;
+
+  /**
+   * Retries this exact message by its stable ID.
+   */
   onRetry?: (id: string) => void;
-  // Disables the Retry button while any send is in flight, so a retry
-  // can't be triggered concurrently with another in-progress send.
+
+  /**
+   * Prevents concurrent retry operations.
+   */
   sending?: boolean;
 }
 
-// Renders a single chat bubble. The bubble's side (left/right) follows the
-// standard chat convention based on role, but the text direction and
-// alignment inside the bubble are based on the actual language of that
-// message's content — not a single fixed app-wide direction.
-export function ChatMessage({ message, onOpenCapability, onRetry, sending }: ChatMessageProps) {
+/**
+ * Renders one message in the conversation.
+ *
+ * Responsibilities:
+ * - user/assistant bubble alignment
+ * - per-message RTL/LTR detection
+ * - Markdown + GFM rendering
+ * - multimedia attachment previews
+ * - failed-message Retry
+ * - capability routing
+ */
+export function ChatMessage({
+  message,
+  onOpenCapability,
+  onRetry,
+  sending = false,
+}: ChatMessageProps) {
   const { t } = useTranslation();
-  const lang = detectMessageLanguage(message.content);
-  const rtl = isRtl(lang);
+
+  const language = detectMessageLanguage(message.content);
+  const rtl = isRtl(language);
   const isUser = message.role === "user";
 
+  const attachments = message.attachments ?? [];
+
+  const canOpenCapability =
+    Boolean(
+      message.capability &&
+        message.capability !== "GENERAL_CHAT" &&
+        onOpenCapability,
+    );
+
+  const handleCapabilityOpen = () => {
+    if (
+      message.capability &&
+      message.capability !== "GENERAL_CHAT" &&
+      onOpenCapability
+    ) {
+      onOpenCapability(
+        message.capability as Exclude<
+          Capability,
+          "GENERAL_CHAT"
+        >,
+      );
+    }
+  };
+
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+    <div
+      className={`flex w-full ${
+        isUser ? "justify-end" : "justify-start"
+      }`}
+    >
       <div
         dir={rtl ? "rtl" : "ltr"}
-        className={`max-w-[92%] rounded-xl2 px-4 py-3 text-[15px] leading-relaxed ${
-          rtl ? "text-right" : "text-left"
-        } ${isUser ? "bg-primary text-background" : "md-panel"} ${
-          message.status === "error" ? "opacity-70" : ""
-        }`}
+        className={[
+          "max-w-[92%]",
+          "rounded-xl2",
+          "px-4",
+          "py-3",
+          "text-[15px]",
+          "leading-relaxed",
+          rtl ? "text-right" : "text-left",
+          isUser
+            ? "bg-primary text-background"
+            : "md-panel",
+          message.status === "error"
+            ? "opacity-70"
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
       >
-        {message.attachmentPreviewUrl && (
-          <img
-            src={message.attachmentPreviewUrl}
-            alt="Attachment"
-            className="max-w-full max-h-64 rounded-lg mb-2 object-cover"
-          />
+        {/* Attachments */}
+        {attachments.length > 0 && (
+          <div
+            className="flex flex-wrap mb-2"
+            aria-label="Message attachments"
+          >
+            {attachments.map((attachment) => (
+              <AttachmentPreview
+                key={attachment.id}
+                attachment={attachment}
+              />
+            ))}
+          </div>
         )}
 
+        {/* Message content */}
         {message.content && (
           <div
-            className={`chat-markdown ${isUser ? "chat-markdown-user" : "chat-markdown-assistant"}`}
+            className={[
+              "chat-markdown",
+              isUser
+                ? "chat-markdown-user"
+                : "chat-markdown-assistant",
+            ].join(" ")}
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
               {message.content}
             </ReactMarkdown>
           </div>
         )}
 
+        {/* Failed message / Retry */}
         {message.status === "error" && (
           <div
             dir={rtl ? "rtl" : "ltr"}
             className="mt-2 flex items-center gap-2 text-xs text-red-200"
           >
             <span>{t("chat.error")}</span>
-            <button
-              type="button"
-              onClick={() => onRetry?.(message.id)}
-              disabled={sending}
-              className="underline hover:no-underline disabled:opacity-50 disabled:pointer-events-none font-medium"
-            >
-              {t("chat.retry")}
-            </button>
+
+            {onRetry && (
+              <button
+                type="button"
+                onClick={() => onRetry(message.id)}
+                disabled={sending}
+                className="font-medium underline underline-offset-2 hover:no-underline disabled:pointer-events-none disabled:opacity-50"
+              >
+                {t("chat.retry")}
+              </button>
+            )}
           </div>
         )}
 
-        {message.capability && message.capability !== "GENERAL_CHAT" && onOpenCapability && (
+        {/* Capability routing */}
+        {canOpenCapability && (
           <button
-            onClick={() =>
-              onOpenCapability(message.capability as Exclude<Capability, "GENERAL_CHAT">)
-            }
+            type="button"
+            onClick={handleCapabilityOpen}
             className="block mt-3 text-xs font-medium text-primary hover:underline"
           >
-            Open {message.capability.toLowerCase().replace("_", " ")} results →
+            Open{" "}
+            {message.capability
+              ?.toLowerCase()
+              .replace("_", " ")}{" "}
+            results →
           </button>
         )}
       </div>
@@ -106,31 +210,90 @@ export function ChatMessage({ message, onOpenCapability, onRetry, sending }: Cha
   );
 }
 
-// Custom renderers so Markdown output looks like a polished product,
-// not raw/unstyled Markdown. No external "prose" plugin dependency —
-// every element is styled explicitly with Tailwind utility classes.
+/**
+ * Custom Markdown renderers.
+ *
+ * The chat does not rely on Tailwind's prose plugin.
+ * Every Markdown element used by the assistant is explicitly styled.
+ */
 const markdownComponents: Components = {
   h1: (props: ComponentProps<"h1">) => (
-    <h1 className="text-lg font-bold mt-3 mb-2 first:mt-0" {...props} />
+    <h1
+      className="text-lg font-bold mt-3 mb-2 first:mt-0"
+      {...props}
+    />
   ),
+
   h2: (props: ComponentProps<"h2">) => (
-    <h2 className="text-base font-bold mt-3 mb-2 first:mt-0" {...props} />
+    <h2
+      className="text-base font-bold mt-3 mb-2 first:mt-0"
+      {...props}
+    />
   ),
+
   h3: (props: ComponentProps<"h3">) => (
-    <h3 className="text-sm font-bold mt-2 mb-1 first:mt-0" {...props} />
+    <h3
+      className="text-sm font-bold mt-2 mb-1 first:mt-0"
+      {...props}
+    />
   ),
-  p: (props: ComponentProps<"p">) => <p className="mb-2 last:mb-0" {...props} />,
+
+  h4: (props: ComponentProps<"h4">) => (
+    <h4
+      className="text-sm font-semibold mt-2 mb-1 first:mt-0"
+      {...props}
+    />
+  ),
+
+  p: (props: ComponentProps<"p">) => (
+    <p
+      className="mb-2 last:mb-0 break-words"
+      {...props}
+    />
+  ),
+
   ul: (props: ComponentProps<"ul">) => (
-    <ul className="list-disc ps-5 mb-2 space-y-1" {...props} />
+    <ul
+      className="list-disc ps-5 mb-2 space-y-1"
+      {...props}
+    />
   ),
+
   ol: (props: ComponentProps<"ol">) => (
-    <ol className="list-decimal ps-5 mb-2 space-y-1" {...props} />
+    <ol
+      className="list-decimal ps-5 mb-2 space-y-1"
+      {...props}
+    />
   ),
-  li: (props: ComponentProps<"li">) => <li className="leading-relaxed" {...props} />,
+
+  li: (props: ComponentProps<"li">) => (
+    <li
+      className="leading-relaxed break-words"
+      {...props}
+    />
+  ),
+
   strong: (props: ComponentProps<"strong">) => (
-    <strong className="font-semibold" {...props} />
+    <strong
+      className="font-semibold"
+      {...props}
+    />
   ),
-  em: (props: ComponentProps<"em">) => <em className="italic" {...props} />,
+
+  em: (props: ComponentProps<"em">) => (
+    <em
+      className="italic"
+      {...props}
+    />
+  ),
+
+  del: (props: ComponentProps<"del">) => (
+    <del
+      className="line-through opacity-80"
+      {...props}
+    />
+  ),
+
   a: (props: ComponentProps<"a">) => (
     <a
       {...props}
@@ -139,46 +302,115 @@ const markdownComponents: Components = {
       className="text-primary underline underline-offset-2 hover:opacity-80 break-words"
     />
   ),
-  // react-markdown v9 no longer passes an "inline" boolean prop; block vs.
-  // inline code is instead inferred from a "language-*" className (fenced
-  // code with a language tag) or the presence of a newline in the content.
-  code: ({ className, children, ...rest }) => {
+
+  hr: (props: ComponentProps<"hr">) => (
+    <hr
+      className="my-3 border-border/60"
+      {...props}
+    />
+  ),
+
+  code: ({
+    className,
+    children,
+    ...rest
+  }) => {
     const text = String(children).replace(/\n$/, "");
-    const isBlock = /language-(\w+)/.test(className ?? "") || text.includes("\n");
+
+    const isBlock =
+      /language-\w+/.test(className ?? "") ||
+      text.includes("\n");
+
     if (isBlock) {
       return (
-        <code className={`font-mono text-[13px] ${className ?? ""}`} {...rest}>
+        <code
+          className={[
+            "font-mono",
+            "text-[13px]",
+            "leading-relaxed",
+            className ?? "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          {...rest}
+        >
           {children}
         </code>
       );
     }
+
     return (
-      <code className="px-1.5 py-0.5 rounded bg-black/20 font-mono text-[13px]" {...rest}>
+      <code
+        className="px-1.5 py-0.5 rounded bg-black/20 font-mono text-[13px] break-words"
+        {...rest}
+      >
         {children}
       </code>
     );
   },
+
   pre: (props: ComponentProps<"pre">) => (
-    <pre className="bg-black/25 rounded-lg p-3 mb-2 overflow-x-auto text-[13px]" {...props} />
+    <pre
+      className="bg-black/25 rounded-lg p-3 mb-2 overflow-x-auto text-[13px] leading-relaxed max-w-full"
+      {...props}
+    />
   ),
+
   table: (props: ComponentProps<"table">) => (
-    <div className="overflow-x-auto mb-2">
-      <table className="min-w-full text-sm border-collapse" {...props} />
+    <div className="overflow-x-auto mb-2 max-w-full">
+      <table
+        className="min-w-full text-sm border-collapse"
+        {...props}
+      />
     </div>
   ),
+
   thead: (props: ComponentProps<"thead">) => (
-    <thead className="border-b border-border/60" {...props} />
+    <thead
+      className="border-b border-border/60"
+      {...props}
+    />
   ),
+
+  tbody: (props: ComponentProps<"tbody">) => (
+    <tbody {...props} />
+  ),
+
+  tr: (props: ComponentProps<"tr">) => (
+    <tr
+      className="border-border/30"
+      {...props}
+    />
+  ),
+
   th: (props: ComponentProps<"th">) => (
-    <th className="px-3 py-1.5 text-start font-semibold" {...props} />
+    <th
+      className="px-3 py-1.5 text-start font-semibold whitespace-nowrap"
+      {...props}
+    />
   ),
+
   td: (props: ComponentProps<"td">) => (
-    <td className="px-3 py-1.5 border-t border-border/30" {...props} />
+    <td
+      className="px-3 py-1.5 border-t border-border/30 align-top"
+      {...props}
+    />
   ),
-  blockquote: (props: ComponentProps<"blockquote">) => (
-    <blockquote className="border-s-2 border-primary/50 ps-3 italic text-text-muted mb-2" {...props} />
+
+  blockquote: (
+    props: ComponentProps<"blockquote">,
+  ) => (
+    <blockquote
+      className="border-s-2 border-primary/50 ps-3 italic text-text-muted mb-2"
+      {...props}
+    />
   ),
+
   input: (props: ComponentProps<"input">) => (
-    <input {...props} disabled className="me-2 align-middle accent-primary" />
+    <input
+      {...props}
+      disabled
+      className="me-2 align-middle accent-primary"
+    />
   ),
 };
