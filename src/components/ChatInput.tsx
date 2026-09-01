@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type RefObject,
+} from "react";
 import {
   Plus,
   ImagePlus,
@@ -21,7 +27,16 @@ interface ChatInputProps {
   sending?: boolean;
 }
 
-export function ChatInput({ onSend, sending = false }: ChatInputProps) {
+type AttachMenuOption = {
+  label: string;
+  icon: typeof ImagePlus;
+  inputRef: RefObject<HTMLInputElement | null>;
+};
+
+export function ChatInput({
+  onSend,
+  sending = false,
+}: ChatInputProps) {
   const { t } = useTranslation();
 
   const [text, setText] = useState("");
@@ -36,11 +51,19 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
 
-  // Keep the latest attachments available for unmount cleanup.
+  /*
+   * Keep the latest attachments available for unmount cleanup.
+   */
   const attachmentsRef = useRef<ChatAttachment[]>([]);
-  attachmentsRef.current = attachments;
 
-  // Release object URLs for attachments still owned by ChatInput.
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  /*
+   * Release object URLs that are still owned by ChatInput
+   * when the component is unmounted.
+   */
   useEffect(() => {
     return () => {
       attachmentsRef.current.forEach((attachment) => {
@@ -49,11 +72,13 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
     };
   }, []);
 
-  // Close Attach menu when clicking outside.
+  /*
+   * Close Attach menu when clicking outside.
+   */
   useEffect(() => {
     if (!menuOpen) return;
 
-    function handlePointerDown(event: PointerEvent) {
+    const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
 
       if (
@@ -63,69 +88,124 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
       ) {
         setMenuOpen(false);
       }
-    }
+    };
 
-    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener(
+      "pointerdown",
+      handlePointerDown,
+    );
 
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener(
+        "pointerdown",
+        handlePointerDown,
+      );
     };
   }, [menuOpen]);
 
-  // Close Attach menu with Escape.
+  /*
+   * Close Attach menu with Escape.
+   */
   useEffect(() => {
     if (!menuOpen) return;
 
-    function handleEscape(event: globalThis.KeyboardEvent) {
+    const handleEscape = (
+      event: globalThis.KeyboardEvent,
+    ) => {
       if (event.key === "Escape") {
         setMenuOpen(false);
       }
-    }
+    };
 
-    document.addEventListener("keydown", handleEscape);
+    document.addEventListener(
+      "keydown",
+      handleEscape,
+    );
 
     return () => {
-      document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener(
+        "keydown",
+        handleEscape,
+      );
     };
   }, [menuOpen]);
 
-  function addFiles(fileList: FileList | null) {
-    if (!fileList?.length) return;
+  /*
+   * Add selected files.
+   */
+  function addFiles(
+    fileList: FileList | null,
+    input?: HTMLInputElement,
+  ) {
+    if (!fileList?.length) {
+      if (input) {
+        input.value = "";
+      }
+      return;
+    }
 
-    const newAttachments: ChatAttachment[] = Array.from(fileList).map(
-      (file) => ({
+    const newAttachments: ChatAttachment[] =
+      Array.from(fileList).map((file) => ({
         id: crypto.randomUUID(),
         file,
         previewUrl: URL.createObjectURL(file),
         kind: getAttachmentKind(file),
-      }),
-    );
+      }));
 
-    setAttachments((current) => [...current, ...newAttachments]);
+    setAttachments((current) => [
+      ...current,
+      ...newAttachments,
+    ]);
+
     setMenuOpen(false);
+
+    /*
+     * Reset input so selecting the same file again
+     * triggers onChange.
+     */
+    if (input) {
+      input.value = "";
+    }
   }
 
+  /*
+   * Remove an attachment and release its object URL.
+   */
   function removeAttachment(id: string) {
     setAttachments((current) => {
-      const attachment = current.find((item) => item.id === id);
+      const attachment = current.find(
+        (item) => item.id === id,
+      );
 
       if (attachment) {
         URL.revokeObjectURL(attachment.previewUrl);
       }
 
-      return current.filter((item) => item.id !== id);
+      return current.filter(
+        (item) => item.id !== id,
+      );
     });
   }
 
+  /*
+   * Send message.
+   */
   function handleSend() {
     if (sending) return;
 
     const trimmedText = text.trim();
 
-    if (!trimmedText && attachments.length === 0) return;
+    if (
+      !trimmedText &&
+      attachments.length === 0
+    ) {
+      return;
+    }
 
-    // Ownership of attachments transfers to the parent message state.
-    // Their object URLs must therefore NOT be revoked here.
+    /*
+     * Ownership of attachments transfers to the parent.
+     * Do NOT revoke their object URLs here.
+     */
     onSend(trimmedText, attachments);
 
     setText("");
@@ -133,22 +213,35 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
     setMenuOpen(false);
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== "Enter" || event.shiftKey) return;
+  /*
+   * Enter = send
+   * Shift + Enter = new line
+   */
+  function handleKeyDown(
+    event: KeyboardEvent<HTMLTextAreaElement>,
+  ) {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey
+    ) {
+      return;
+    }
 
     event.preventDefault();
     handleSend();
   }
 
+  /*
+   * Voice input placeholder.
+   * Real STT will be connected in the Voice phase.
+   */
   function toggleRecording() {
     if (sending) return;
 
-    // Voice recording/STT is intentionally not implemented yet.
-    // This preserves the existing microphone UI until the Voice phase.
     setRecording((current) => !current);
   }
 
-  const attachMenuOptions = [
+  const attachMenuOptions: AttachMenuOption[] = [
     {
       label: "Photo",
       icon: ImagePlus,
@@ -169,14 +262,18 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
       icon: Music,
       inputRef: audioInputRef,
     },
-  ] as const;
+  ];
 
   const canSend =
-    !sending && (!!text.trim() || attachments.length > 0);
+    !sending &&
+    (
+      text.trim().length > 0 ||
+      attachments.length > 0
+    );
 
   return (
     <div className="md-panel p-3">
-      {/* Selected attachment previews */}
+      {/* Selected attachments */}
       {attachments.length > 0 && (
         <div
           className="flex flex-wrap mb-1"
@@ -186,7 +283,9 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
             <AttachmentPreview
               key={attachment.id}
               attachment={attachment}
-              onRemove={() => removeAttachment(attachment.id)}
+              onRemove={() =>
+                removeAttachment(attachment.id)
+              }
               disabled={sending}
             />
           ))}
@@ -195,13 +294,19 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
 
       <div className="flex items-end gap-2">
         {/* Hidden file inputs */}
+
         <input
           ref={imageInputRef}
           type="file"
           accept="image/*"
           multiple
           className="hidden"
-          onChange={(event) => addFiles(event.target.files)}
+          onChange={(event) =>
+            addFiles(
+              event.target.files,
+              event.currentTarget,
+            )
+          }
         />
 
         <input
@@ -210,7 +315,12 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
           accept="video/*"
           multiple
           className="hidden"
-          onChange={(event) => addFiles(event.target.files)}
+          onChange={(event) =>
+            addFiles(
+              event.target.files,
+              event.currentTarget,
+            )
+          }
         />
 
         <input
@@ -218,7 +328,12 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
           type="file"
           multiple
           className="hidden"
-          onChange={(event) => addFiles(event.target.files)}
+          onChange={(event) =>
+            addFiles(
+              event.target.files,
+              event.currentTarget,
+            )
+          }
         />
 
         <input
@@ -227,24 +342,38 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
           accept="audio/*"
           multiple
           className="hidden"
-          onChange={(event) => addFiles(event.target.files)}
+          onChange={(event) =>
+            addFiles(
+              event.target.files,
+              event.currentTarget,
+            )
+          }
         />
 
         {/* Attach button + menu */}
-        <div ref={menuRef} className="relative">
+        <div
+          ref={menuRef}
+          className="relative"
+        >
           <button
             type="button"
             disabled={sending}
             aria-label="Attach"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((current) => !current)}
+            onClick={() =>
+              setMenuOpen(
+                (current) => !current,
+              )
+            }
             className="p-2.5 rounded-full text-text-muted hover:text-primary transition-colors disabled:opacity-40 disabled:pointer-events-none"
           >
             <Plus
               size={20}
               className={`transition-transform ${
-                menuOpen ? "rotate-45" : ""
+                menuOpen
+                  ? "rotate-45"
+                  : ""
               }`}
             />
           </button>
@@ -256,13 +385,19 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
               className="absolute bottom-full mb-2 start-0 md-panel p-1.5 flex flex-col gap-0.5 min-w-[150px] shadow-lg z-20"
             >
               {attachMenuOptions.map(
-                ({ label, icon: Icon, inputRef }) => (
+                ({
+                  label,
+                  icon: Icon,
+                  inputRef,
+                }) => (
                   <button
                     key={label}
                     type="button"
                     role="menuitem"
                     disabled={sending}
-                    onClick={() => inputRef.current?.click()}
+                    onClick={() =>
+                      inputRef.current?.click()
+                    }
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-text hover:bg-surface transition-colors text-start disabled:opacity-50"
                   >
                     <Icon
@@ -296,7 +431,9 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
         {/* Text input */}
         <textarea
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) =>
+            setText(event.target.value)
+          }
           onKeyDown={handleKeyDown}
           rows={1}
           enterKeyHint="send"
@@ -315,7 +452,10 @@ export function ChatInput({ onSend, sending = false }: ChatInputProps) {
           className="md-btn-primary p-2.5 rounded-full disabled:opacity-50"
         >
           {sending ? (
-            <Loader2 className="animate-spin" size={20} />
+            <Loader2
+              className="animate-spin"
+              size={20}
+            />
           ) : (
             <Send size={20} />
           )}
