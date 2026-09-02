@@ -59,28 +59,15 @@ export function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
 
-  /*
-   * This ref intentionally mirrors the current attachments array.
-   * It allows cleanup of only the files that are still owned by this
-   * ChatInput instance when the component unmounts.
-   *
-   * Sent attachments are transferred to the parent through onSend().
-   * Their object URLs must NOT be revoked here immediately because
-   * ChatMessage may still use those exact preview URLs.
-   */
   const attachmentsRef = useRef<ChatAttachment[]>([]);
   attachmentsRef.current = attachments;
 
-  /*
-   * Keep the latest text available to asynchronous speech callbacks.
-   * The speech hook already guarantees finalized results, while this
-   * component owns how those results are merged into the textarea.
-   */
   const textRef = useRef("");
   textRef.current = text;
 
   /*
-   * Add finalized speech text without ever replacing existing input.
+   * Merge finalized speech recognition results into the current
+   * textarea content without replacing text already typed by the user.
    */
   const handleSpeechResult = useCallback((finalText: string) => {
     const incoming = finalText.trim();
@@ -100,25 +87,35 @@ export function ChatInput({
     });
   }, []);
 
+  /*
+   * The actual Speech-to-Text implementation lives inside this hook.
+   * This component only controls its UI and integration with ChatInput.
+   */
   const speech = useSpeechRecognition({
     language: i18n.language,
     onResult: handleSpeechResult,
   });
 
   /*
-   * If the UI language changes while recognition is active, stop the
-   * current browser recognition session. The next tap starts it using
-   * the new locale from speechLocales.ts.
+   * Stop an active recognition session when:
+   * - the language changes
+   * - the component unmounts
+   *
+   * This prevents recognition from continuing with an outdated locale.
    */
   useEffect(() => {
     speech.stop();
+
+    return () => {
+      speech.stop();
+    };
   }, [i18n.language, speech.stop]);
 
   /*
-   * Cleanup only attachments that still belong to this input.
+   * Release object URLs still owned by this component.
    *
-   * Once attachments have been handed to onSend(), this state becomes
-   * empty and the parent owns those ChatAttachment objects.
+   * URLs handed to the parent via onSend() are intentionally not revoked
+   * here because the parent/message renderer may still need them.
    */
   useEffect(() => {
     return () => {
@@ -156,7 +153,7 @@ export function ChatInput({
   }, [menuOpen]);
 
   /*
-   * Escape closes the attachment menu.
+   * Escape closes attachment menu.
    */
   useEffect(() => {
     if (!menuOpen) {
@@ -164,10 +161,12 @@ export function ChatInput({
     }
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setMenuOpen(false);
+      if (event.key !== "Escape") {
+        return;
       }
+
+      event.preventDefault();
+      setMenuOpen(false);
     };
 
     document.addEventListener("keydown", handleKeyDown);
@@ -178,19 +177,22 @@ export function ChatInput({
   }, [menuOpen]);
 
   /*
-   * Sending always wins over auxiliary UI.
+   * Sending always closes auxiliary UI and stops active voice input.
    */
   useEffect(() => {
-    if (sending) {
-      setMenuOpen(false);
+    if (!sending) {
+      return;
     }
-  }, [sending]);
+
+    setMenuOpen(false);
+
+    if (speech.status === "listening") {
+      speech.stop();
+    }
+  }, [sending, speech.status, speech.stop]);
 
   /*
-   * Add selected files to the existing attachment collection.
-   *
-   * Object URLs are created exactly once and the resulting
-   * ChatAttachment objects are preserved unchanged.
+   * Add selected files.
    */
   const addFiles = useCallback(
     (fileList: FileList | null) => {
@@ -220,8 +222,7 @@ export function ChatInput({
   );
 
   /*
-   * Remove one attachment and immediately release its object URL.
-   * This is safe because the attachment is no longer being sent.
+   * Remove attachment and immediately release its object URL.
    */
   const removeAttachment = useCallback((id: string) => {
     setAttachments((current) => {
@@ -233,15 +234,14 @@ export function ChatInput({
         URL.revokeObjectURL(attachment.previewUrl);
       }
 
-      return current.filter((item) => item.id !== id);
+      return current.filter(
+        (item) => item.id !== id,
+      );
     });
   }, []);
 
   /*
-   * Stop speech before sending.
-   *
-   * This guarantees that a finalized transcript cannot arrive after
-   * the message has already been handed to the parent.
+   * Send message.
    */
   const handleSend = useCallback(() => {
     if (sending) {
@@ -259,15 +259,11 @@ export function ChatInput({
     }
 
     /*
-     * Keep the exact ChatAttachment objects.
-     * The parent/Home owns them after this callback.
+     * Parent takes ownership of the attachment objects.
+     * Their object URLs must remain alive for message rendering.
      */
     onSend(trimmedText, attachments);
 
-    /*
-     * Clear only this input's local references.
-     * Do NOT revoke preview URLs here: ChatMessage may still render them.
-     */
     setText("");
     setAttachments([]);
     setMenuOpen(false);
@@ -275,7 +271,8 @@ export function ChatInput({
     attachments,
     onSend,
     sending,
-    speech,
+    speech.status,
+    speech.stop,
   ]);
 
   /*
@@ -294,10 +291,6 @@ export function ChatInput({
     [handleSend],
   );
 
-  /*
-   * Attachment menu definition is intentionally local to the component
-   * because the input refs are instance-specific.
-   */
   const attachMenuOptions: AttachmentMenuOption[] = [
     {
       id: "image",
@@ -373,9 +366,6 @@ export function ChatInput({
       className="md-panel p-3"
       aria-busy={sending}
     >
-      {/*
-       * Selected attachments
-       */}
       {hasAttachments && (
         <div
           className="mb-2 flex flex-wrap gap-1"
@@ -397,12 +387,6 @@ export function ChatInput({
         </div>
       )}
 
-      {/*
-       * Hidden native file inputs.
-       *
-       * The value is reset after every selection so choosing the exact
-       * same file again still triggers onChange.
-       */}
       <input
         ref={imageInputRef}
         type="file"
@@ -459,9 +443,7 @@ export function ChatInput({
       />
 
       <div className="flex items-end gap-2">
-        {/*
-         * Attachment button
-         */}
+        {/* Attachment */}
         <div
           ref={menuRef}
           className="relative shrink-0"
@@ -528,16 +510,11 @@ export function ChatInput({
           )}
         </div>
 
-        {/*
-         * Voice input
-         */}
+        {/* Voice Input */}
         <div className="relative shrink-0">
           <button
             type="button"
-            disabled={
-              sending ||
-              !speech.isSupported
-            }
+            disabled={sending || !speech.isSupported}
             onClick={speech.toggle}
             aria-label={micLabel}
             aria-pressed={isListening}
@@ -553,10 +530,6 @@ export function ChatInput({
                   : "text-text-muted hover:text-primary",
             ].join(" ")}
           >
-            {/*
-             * Pulsing ring gives a much clearer visual indication that
-             * the microphone is actively listening.
-             */}
             {isListening && (
               <span
                 aria-hidden="true"
@@ -591,9 +564,6 @@ export function ChatInput({
             </span>
           </button>
 
-          {/*
-           * Visually hidden live region for assistive technology.
-           */}
           {micStatusText && (
             <span
               className="sr-only"
@@ -611,9 +581,7 @@ export function ChatInput({
           )}
         </div>
 
-        {/*
-         * Text input
-         */}
+        {/* Text Input */}
         <textarea
           value={text}
           onChange={(event) =>
@@ -624,6 +592,7 @@ export function ChatInput({
           enterKeyHint="send"
           placeholder={t(
             "chat.placeholder",
+            "Message",
           )}
           disabled={sending}
           aria-label={t(
@@ -633,9 +602,7 @@ export function ChatInput({
           className="md-input min-h-[42px] max-h-32 min-w-0 flex-1 resize-none disabled:opacity-60"
         />
 
-        {/*
-         * Send button
-         */}
+        {/* Send */}
         <button
           type="button"
           onClick={handleSend}
