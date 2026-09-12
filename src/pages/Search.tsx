@@ -22,13 +22,19 @@ export default function Search() {
     setLoading(true);
     setConfigMessage(null);
     setResults(null);
+
     try {
-      const { data, error } = await supabase.functions.invoke("search", { body: { query } });
+      const { data, error } = await supabase.functions.invoke("search", {
+        body: { query },
+      });
+
       if (error) throw error;
+
       if (data.status === "CONFIGURATION_REQUIRED") {
         setConfigMessage(data.message);
         return;
       }
+
       setResults(data.results);
     } catch (err) {
       console.error(err);
@@ -39,22 +45,46 @@ export default function Search() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
+    <div className="max-w-2xl mx-auto px-4 py-6 mobile-page-bottom-spacing">
       <h1 className="text-xl font-semibold mb-4">{t("nav.search")}</h1>
+
       <form onSubmit={runSearch} className="flex gap-2 mb-6">
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search the web..." className="md-input flex-1" />
-        <button type="submit" className="md-btn-primary">Search</button>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search the web..."
+          className="md-input flex-1"
+        />
+
+        <button type="submit" className="md-btn-primary">
+          Search
+        </button>
       </form>
 
       {loading && <LoadingState />}
+
       {configMessage && <ConfigRequired label={configMessage} />}
-      {results && results.length === 0 && <EmptyState label="No results found." />}
+
+      {results && results.length === 0 && (
+        <EmptyState label="No results found." />
+      )}
+
       {results && results.length > 0 && (
         <div className="space-y-4">
           {results.map((r, i) => (
-            <a key={i} href={r.url} target="_blank" rel="noreferrer" className="md-panel p-3 block hover:border-primary/50 transition-colors">
-              <p className="text-sm font-medium text-primary truncate">{r.title}</p>
+            <a
+              key={i}
+              href={r.url}
+              target="_blank"
+              rel="noreferrer"
+              className="md-panel p-3 block hover:border-primary/50 transition-colors"
+            >
+              <p className="text-sm font-medium text-primary truncate">
+                {r.title}
+              </p>
+
               <p className="text-xs text-text-muted truncate">{r.url}</p>
+
               <p className="text-sm mt-1 line-clamp-2">{r.snippet}</p>
             </a>
           ))}
