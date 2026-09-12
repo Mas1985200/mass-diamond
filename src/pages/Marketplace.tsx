@@ -44,10 +44,13 @@ export default function Marketplace() {
   }, []);
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6">
+    <div className="max-w-4xl mx-auto px-4 py-6 mobile-page-bottom-spacing">
       <div className="flex items-center justify-between gap-3 mb-6">
         <h1 className="text-xl font-semibold">{t("nav.marketplace")}</h1>
-        <Link to="/marketplace/new" className="md-btn-primary flex items-center gap-1.5 text-sm">
+        <Link
+          to="/marketplace/new"
+          className="md-btn-primary flex items-center gap-1.5 text-sm"
+        >
           <Plus size={16} /> Sell an item
         </Link>
       </div>
@@ -73,12 +76,18 @@ export default function Marketplace() {
 
       {listings === null && !error && <LoadingState />}
       {error && <ErrorState label={error} onRetry={load} />}
-      {listings && listings.length === 0 && <EmptyState label={t("empty.marketplace")} />}
+      {listings && listings.length === 0 && (
+        <EmptyState label={t("empty.marketplace")} />
+      )}
 
       {listings && listings.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           {listings.map((l) => (
-            <Link key={l.id} to={`/marketplace/${l.id}`} className="md-panel p-3 hover:border-primary/50 transition-colors">
+            <Link
+              key={l.id}
+              to={`/marketplace/${l.id}`}
+              className="md-panel p-3 hover:border-primary/50 transition-colors"
+            >
               <div className="aspect-square bg-surface rounded-lg mb-2 flex items-center justify-center text-text-muted text-xs relative">
                 No image
                 {l.is_featured && (
@@ -87,11 +96,16 @@ export default function Marketplace() {
                   </span>
                 )}
               </div>
+
               <p className="text-sm font-medium truncate">{l.title}</p>
+
               <p className="text-primary text-sm mt-1">
                 {l.price ? `${l.price} ${l.currency}` : "Price on request"}
               </p>
-              <p className="text-xs text-text-muted truncate">{l.city ?? l.location_text}</p>
+
+              <p className="text-xs text-text-muted truncate">
+                {l.city ?? l.location_text}
+              </p>
             </Link>
           ))}
         </div>
