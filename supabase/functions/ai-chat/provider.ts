@@ -1,9 +1,5 @@
-// ==========================================================
-// Mass Diamond — AI provider abstraction
-// Add new providers by implementing AIProvider and registering
-// them in getProvider(). The rest of the app never talks to a
-// specific vendor SDK directly.
-// ==========================================================
+const PROVIDER_TIMEOUT_MS = 25_000;
+const MAX_PROVIDER_ERROR_LENGTH = 500;
 
 export interface AIMessage {
   role: "user" | "assistant" | "system";
@@ -24,8 +20,19 @@ export interface AIProvider {
   ): Promise<AIProviderResponse>;
 }
 
-const PROVIDER_TIMEOUT_MS = 25_000;
-const MAX_PROVIDER_ERROR_LENGTH = 500;
+export class NoProviderConfiguredError extends Error {
+  constructor() {
+    super("AI provider is not configured");
+    this.name = "NoProviderConfiguredError";
+  }
+}
+
+export class ProviderTimeoutError extends Error {
+  constructor(providerName: string) {
+    super(`${providerName} provider request timed out`);
+    this.name = "ProviderTimeoutError";
+  }
+}
 
 function createTimeoutController(timeoutMs: number): {
   controller: AbortController;
@@ -40,8 +47,25 @@ function createTimeoutController(timeoutMs: number): {
   return { controller, timeoutId };
 }
 
-function sanitizeProviderError(status: number, body: string): string {
+function providerTimeoutError(
+  providerName: string,
+): ProviderTimeoutError {
+  return new ProviderTimeoutError(providerName);
+}
+
+function sanitizeProviderError(
+  status: number,
+  body: string,
+): string {
   const normalized = body
+    .replace(
+      /Bearer\s+[A-Za-z0-9._~+/=-]+/gi,
+      "Bearer [redacted]",
+    )
+    .replace(
+      /\b(?:sk|gsk)_[A-Za-z0-9_-]+\b/g,
+      "[redacted-key]",
+    )
     .replace(/[\u0000-\u001F\u007F]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -50,10 +74,6 @@ function sanitizeProviderError(status: number, body: string): string {
   return normalized
     ? `Provider request failed (${status}): ${normalized}`
     : `Provider request failed (${status})`;
-}
-
-function providerTimeoutError(providerName: string): Error {
-  return new Error(`${providerName} provider request timed out`);
 }
 
 class AnthropicProvider implements AIProvider {
@@ -69,57 +89,97 @@ class AnthropicProvider implements AIProvider {
     messages: AIMessage[],
     _opts?: { language?: string },
   ): Promise<AIProviderResponse> {
-    const system = messages.find((m) => m.role === "system")?.content;
+    const systemMessage = messages.find(
+      (message) => message.role === "system",
+    );
 
-    const rest = messages.filter((m) => m.role !== "system");
+    const conversationMessages = messages
+      .filter((message) => message.role !== "system")
+      .map((message) => ({
+        role: message.role as "user" | "assistant",
+        content: message.content,
+      }));
 
     const { controller, timeoutId } =
       createTimeoutController(PROVIDER_TIMEOUT_MS);
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": this.apiKey,
-          "anthropic-version": "2023-06-01",
+      const response = await fetch(
+        "https://api.anthropic.com/v1/messages",
+        {
+          method: "POST",
+          headers: {
+            "x-api-key": this.apiKey,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 1024,
+            ...(systemMessage
+              ? { system: systemMessage.content }
+              : {}),
+            messages: conversationMessages,
+          }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1024,
-          ...(system ? { system } : {}),
-          messages: rest.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-        }),
-      });
+      );
 
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(sanitizeProviderError(res.status, body));
+      if (!response.ok) {
+        const body = await response.text();
+
+        throw new Error(
+          sanitizeProviderError(
+            response.status,
+            body,
+          ),
+        );
       }
 
-      const data = await res.json();
+      const data = await response.json();
 
-      const text = (data.content ?? [])
+      const contentBlocks: unknown[] =
+        Array.isArray(data.content)
+          ? data.content
+          : [];
+
+      const textBlocks = contentBlocks
         .filter(
-          (block: unknown): block is { type: string; text: string } =>
+          (
+            block: unknown,
+          ): block is {
+            type: string;
+            text?: unknown;
+          } =>
             typeof block === "object" &&
             block !== null &&
-            "type" in block &&
-            "text" in block &&
-            typeof block.type === "string" &&
-            typeof block.text === "string",
+            !Array.isArray(block) &&
+            "type" in block,
         )
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
-        .join("\n")
-        .trim();
+        .filter(
+          (block: {
+            type: string;
+            text?: unknown;
+          }) => block.type === "text",
+        );
+
+      const content = textBlocks
+        .map((block) =>
+          typeof block.text === "string"
+            ? block.text
+            : "",
+        )
+        .filter(Boolean)
+        .join("\n");
+
+      if (!content) {
+        throw new Error(
+          "Anthropic provider returned an empty completion",
+        );
+      }
 
       return {
-        content: text,
+        content,
         inputTokens:
           typeof data.usage?.input_tokens === "number"
             ? data.usage.input_tokens
@@ -130,20 +190,14 @@ class AnthropicProvider implements AIProvider {
             : undefined,
       };
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
+      if (
+        error instanceof DOMException &&
+        error.name === "AbortError"
+      ) {
         throw providerTimeoutError(this.name);
       }
 
-      if (
-        error instanceof Error &&
-        error.message.includes("timed out")
-      ) {
-        throw error;
-      }
-
-      throw error instanceof Error
-        ? error
-        : new Error("Anthropic provider request failed");
+      throw error;
     } finally {
       clearTimeout(timeoutId);
     }
@@ -167,33 +221,49 @@ class OpenAIProvider implements AIProvider {
       createTimeoutController(PROVIDER_TIMEOUT_MS);
 
     try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${this.apiKey}`,
+      const response = await fetch(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "gpt-4.1",
+            messages,
+          }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          model: "gpt-4.1",
-          messages: messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-        }),
-      });
+      );
 
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(sanitizeProviderError(res.status, body));
+      if (!response.ok) {
+        const body = await response.text();
+
+        throw new Error(
+          sanitizeProviderError(
+            response.status,
+            body,
+          ),
+        );
       }
 
-      const data = await res.json();
+      const data = await response.json();
 
-      const content = data.choices?.[0]?.message?.content;
+      const content =
+        typeof data.choices?.[0]?.message?.content ===
+        "string"
+          ? data.choices[0].message.content
+          : "";
+
+      if (!content) {
+        throw new Error(
+          "OpenAI provider returned an empty completion",
+        );
+      }
 
       return {
-        content: typeof content === "string" ? content.trim() : "",
+        content,
         inputTokens:
           typeof data.usage?.prompt_tokens === "number"
             ? data.usage.prompt_tokens
@@ -204,44 +274,119 @@ class OpenAIProvider implements AIProvider {
             : undefined,
       };
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
+      if (
+        error instanceof DOMException &&
+        error.name === "AbortError"
+      ) {
         throw providerTimeoutError(this.name);
       }
 
-      if (
-        error instanceof Error &&
-        error.message.includes("timed out")
-      ) {
-        throw error;
-      }
-
-      throw error instanceof Error
-        ? error
-        : new Error("OpenAI provider request failed");
+      throw error;
     } finally {
       clearTimeout(timeoutId);
     }
   }
 }
 
-/**
- * NoProviderConfigured is NOT a fake AI response.
- *
- * It throws, and the calling function is responsible for returning
- * a clear CONFIGURATION_REQUIRED state to the client.
- */
-export class NoProviderConfiguredError extends Error {
-  constructor() {
-    super("AI provider is not configured");
-    this.name = "NoProviderConfiguredError";
+class GroqProvider implements AIProvider {
+  name = "groq";
+
+  private readonly apiKey: string;
+
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
+  }
+
+  async complete(
+    messages: AIMessage[],
+    _opts?: { language?: string },
+  ): Promise<AIProviderResponse> {
+    const { controller, timeoutId } =
+      createTimeoutController(PROVIDER_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "openai/gpt-oss-120b",
+            messages,
+          }),
+          signal: controller.signal,
+        },
+      );
+
+      if (!response.ok) {
+        const body = await response.text();
+
+        throw new Error(
+          sanitizeProviderError(
+            response.status,
+            body,
+          ),
+        );
+      }
+
+      const data = await response.json();
+
+      const content =
+        typeof data.choices?.[0]?.message?.content ===
+        "string"
+          ? data.choices[0].message.content
+          : "";
+
+      if (!content) {
+        throw new Error(
+          "Groq provider returned an empty completion",
+        );
+      }
+
+      return {
+        content,
+        inputTokens:
+          typeof data.usage?.prompt_tokens === "number"
+            ? data.usage.prompt_tokens
+            : undefined,
+        outputTokens:
+          typeof data.usage?.completion_tokens === "number"
+            ? data.usage.completion_tokens
+            : undefined,
+      };
+    } catch (error) {
+      if (
+        error instanceof DOMException &&
+        error.name === "AbortError"
+      ) {
+        throw providerTimeoutError(this.name);
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 }
 
 export function getProvider(): AIProvider {
-  const providerName = Deno.env.get("AI_PROVIDER")?.trim().toLowerCase();
-  const apiKey = Deno.env.get("AI_PROVIDER_API_KEY")?.trim();
+  const providerName = Deno.env
+    .get("AI_PROVIDER")
+    ?.trim()
+    .toLowerCase();
 
-  if (!providerName || providerName === "none" || !apiKey) {
+  const apiKey = Deno.env
+    .get("AI_PROVIDER_API_KEY")
+    ?.trim();
+
+  if (
+    !providerName ||
+    providerName === "none" ||
+    !apiKey
+  ) {
     throw new NoProviderConfiguredError();
   }
 
@@ -252,7 +397,12 @@ export function getProvider(): AIProvider {
     case "openai":
       return new OpenAIProvider(apiKey);
 
+    case "groq":
+      return new GroqProvider(apiKey);
+
     default:
-      throw new Error(`Unknown AI_PROVIDER: ${providerName}`);
+      throw new Error(
+        `Unknown AI_PROVIDER: ${providerName}`,
+      );
   }
 }
