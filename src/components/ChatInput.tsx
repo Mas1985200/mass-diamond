@@ -61,29 +61,29 @@ export function ChatInput({
   >([]);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const menuRef =
-    useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const imageInputRef =
     useRef<HTMLInputElement>(null);
+
   const videoInputRef =
     useRef<HTMLInputElement>(null);
+
   const fileInputRef =
     useRef<HTMLInputElement>(null);
+
   const audioInputRef =
     useRef<HTMLInputElement>(null);
 
   const attachmentsRef =
     useRef<ChatAttachment[]>([]);
+
   attachmentsRef.current = attachments;
 
   const textRef = useRef("");
+
   textRef.current = text;
 
-  /*
-   * Merge finalized speech recognition results into the current
-   * textarea content without replacing text already typed by the user.
-   */
   const handleSpeechResult = useCallback(
     (finalText: string) => {
       const incoming = finalText.trim();
@@ -105,22 +105,11 @@ export function ChatInput({
     [],
   );
 
-  /*
-   * The actual Speech-to-Text implementation lives inside this hook.
-   * This component only controls its UI and integration with ChatInput.
-   */
   const speech = useSpeechRecognition({
     language: i18n.language,
     onResult: handleSpeechResult,
   });
 
-  /*
-   * Stop an active recognition session when:
-   * - the language changes
-   * - the component unmounts
-   *
-   * This prevents recognition from continuing with an outdated locale.
-   */
   useEffect(() => {
     speech.stop();
 
@@ -129,12 +118,6 @@ export function ChatInput({
     };
   }, [i18n.language, speech.stop]);
 
-  /*
-   * Release object URLs still owned by this component.
-   *
-   * URLs handed to the parent via onSend() are intentionally not revoked
-   * here because the parent/message renderer may still need them.
-   */
   useEffect(() => {
     return () => {
       for (const attachment of attachmentsRef.current) {
@@ -145,9 +128,6 @@ export function ChatInput({
     };
   }, []);
 
-  /*
-   * Close attachment menu when clicking outside.
-   */
   useEffect(() => {
     if (!menuOpen) {
       return;
@@ -180,9 +160,6 @@ export function ChatInput({
     };
   }, [menuOpen]);
 
-  /*
-   * Escape closes attachment menu.
-   */
   useEffect(() => {
     if (!menuOpen) {
       return;
@@ -212,9 +189,6 @@ export function ChatInput({
     };
   }, [menuOpen]);
 
-  /*
-   * Sending always closes auxiliary UI and stops active voice input.
-   */
   useEffect(() => {
     if (!sending) {
       return;
@@ -231,9 +205,6 @@ export function ChatInput({
     speech.stop,
   ]);
 
-  /*
-   * Add selected files.
-   */
   const addFiles = useCallback(
     (fileList: FileList | null) => {
       if (!fileList?.length || sending) {
@@ -262,9 +233,6 @@ export function ChatInput({
     [sending],
   );
 
-  /*
-   * Remove attachment and immediately release its object URL.
-   */
   const removeAttachment = useCallback(
     (id: string) => {
       setAttachments((current) => {
@@ -288,11 +256,7 @@ export function ChatInput({
   );
 
   /*
-   * Send message.
-   *
-   * TEMPORARY DIAGNOSTIC:
-   * The alert below confirms whether the ChatInput send
-   * handler is actually being reached.
+   * Diagnostic send handler.
    */
   const handleSend = useCallback(() => {
     alert(
@@ -330,10 +294,6 @@ export function ChatInput({
       },
     );
 
-    /*
-     * Parent takes ownership of the attachment objects.
-     * Their object URLs must remain alive for message rendering.
-     */
     onSend(
       trimmedText,
       attachments,
@@ -350,10 +310,6 @@ export function ChatInput({
     speech.stop,
   ]);
 
-  /*
-   * Enter = send
-   * Shift + Enter = newline
-   */
   const handleTextAreaKeyDown =
     useCallback(
       (
@@ -417,16 +373,20 @@ export function ChatInput({
 
   const hasText =
     text.trim().length > 0;
+
   const hasAttachments =
     attachments.length > 0;
+
   const canSend =
     !sending &&
     (hasText || hasAttachments);
 
   const isListening =
     speech.status === "listening";
+
   const isSpeechError =
     speech.status === "error";
+
   const isSpeechUnsupported =
     speech.status === "unsupported";
 
@@ -613,6 +573,7 @@ export function ChatInput({
                       aria-hidden="true"
                       className="shrink-0 text-primary"
                     />
+
                     <span>
                       {label}
                     </span>
@@ -623,7 +584,7 @@ export function ChatInput({
           )}
         </div>
 
-        {/* Voice Input */}
+        {/* Voice */}
         <div className="relative shrink-0">
           <button
             type="button"
@@ -665,6 +626,7 @@ export function ChatInput({
                     size={20}
                     aria-hidden="true"
                   />
+
                   <AlertCircle
                     size={9}
                     aria-hidden="true"
@@ -697,7 +659,7 @@ export function ChatInput({
           )}
         </div>
 
-        {/* Text Input */}
+        {/* Text */}
         <textarea
           value={text}
           onChange={(event) =>
@@ -723,7 +685,10 @@ export function ChatInput({
         {/* Send */}
         <button
           type="button"
-          onClick={handleSend}
+          onClick={() => {
+            alert("SEND BUTTON CLICKED");
+            handleSend();
+          }}
           disabled={!canSend}
           aria-label={t(
             "chat.send",
