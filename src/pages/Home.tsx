@@ -279,6 +279,19 @@ export default function Home() {
           },
         );
 
+        // Temporary diagnostic output:
+        // Show the exact response received by the frontend.
+        alert(
+          `AI RESPONSE:\n\n${JSON.stringify(
+            {
+              data,
+              error,
+            },
+            null,
+            2,
+          )}`,
+        );
+
         if (error) {
           throw error;
         }
