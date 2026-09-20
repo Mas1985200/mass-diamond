@@ -28,11 +28,18 @@ import {
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 
 interface ChatInputProps {
-  onSend: (message: string, attachments: ChatAttachment[]) => void;
+  onSend: (
+    message: string,
+    attachments: ChatAttachment[],
+  ) => void;
   sending?: boolean;
 }
 
-type AttachmentInputKind = "image" | "video" | "file" | "audio";
+type AttachmentInputKind =
+  | "image"
+  | "video"
+  | "file"
+  | "audio";
 
 interface AttachmentMenuOption {
   id: AttachmentInputKind;
@@ -49,17 +56,25 @@ export function ChatInput({
   const { t, i18n } = useTranslation();
 
   const [text, setText] = useState("");
-  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [attachments, setAttachments] = useState<
+    ChatAttachment[]
+  >([]);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const menuRef = useRef<HTMLDivElement>(null);
+  const menuRef =
+    useRef<HTMLDivElement>(null);
 
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  const videoInputRef = useRef<HTMLInputElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const audioInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef =
+    useRef<HTMLInputElement>(null);
+  const videoInputRef =
+    useRef<HTMLInputElement>(null);
+  const fileInputRef =
+    useRef<HTMLInputElement>(null);
+  const audioInputRef =
+    useRef<HTMLInputElement>(null);
 
-  const attachmentsRef = useRef<ChatAttachment[]>([]);
+  const attachmentsRef =
+    useRef<ChatAttachment[]>([]);
   attachmentsRef.current = attachments;
 
   const textRef = useRef("");
@@ -69,23 +84,26 @@ export function ChatInput({
    * Merge finalized speech recognition results into the current
    * textarea content without replacing text already typed by the user.
    */
-  const handleSpeechResult = useCallback((finalText: string) => {
-    const incoming = finalText.trim();
+  const handleSpeechResult = useCallback(
+    (finalText: string) => {
+      const incoming = finalText.trim();
 
-    if (!incoming) {
-      return;
-    }
-
-    setText((current) => {
-      const existing = current.trim();
-
-      if (!existing) {
-        return incoming;
+      if (!incoming) {
+        return;
       }
 
-      return `${existing} ${incoming}`;
-    });
-  }, []);
+      setText((current) => {
+        const existing = current.trim();
+
+        if (!existing) {
+          return incoming;
+        }
+
+        return `${existing} ${incoming}`;
+      });
+    },
+    [],
+  );
 
   /*
    * The actual Speech-to-Text implementation lives inside this hook.
@@ -120,7 +138,9 @@ export function ChatInput({
   useEffect(() => {
     return () => {
       for (const attachment of attachmentsRef.current) {
-        URL.revokeObjectURL(attachment.previewUrl);
+        URL.revokeObjectURL(
+          attachment.previewUrl,
+        );
       }
     };
   }, []);
@@ -133,7 +153,9 @@ export function ChatInput({
       return;
     }
 
-    const handlePointerDown = (event: PointerEvent) => {
+    const handlePointerDown = (
+      event: PointerEvent,
+    ) => {
       const target = event.target;
 
       if (!(target instanceof Node)) {
@@ -145,10 +167,16 @@ export function ChatInput({
       }
     };
 
-    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener(
+      "pointerdown",
+      handlePointerDown,
+    );
 
     return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener(
+        "pointerdown",
+        handlePointerDown,
+      );
     };
   }, [menuOpen]);
 
@@ -160,7 +188,9 @@ export function ChatInput({
       return;
     }
 
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+    const handleKeyDown = (
+      event: globalThis.KeyboardEvent,
+    ) => {
       if (event.key !== "Escape") {
         return;
       }
@@ -169,10 +199,16 @@ export function ChatInput({
       setMenuOpen(false);
     };
 
-    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener(
+      "keydown",
+      handleKeyDown,
+    );
 
     return () => {
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener(
+        "keydown",
+        handleKeyDown,
+      );
     };
   }, [menuOpen]);
 
@@ -189,7 +225,11 @@ export function ChatInput({
     if (speech.status === "listening") {
       speech.stop();
     }
-  }, [sending, speech.status, speech.stop]);
+  }, [
+    sending,
+    speech.status,
+    speech.stop,
+  ]);
 
   /*
    * Add selected files.
@@ -200,16 +240,17 @@ export function ChatInput({
         return;
       }
 
-      const selectedFiles = Array.from(fileList);
+      const selectedFiles =
+        Array.from(fileList);
 
-      const newAttachments: ChatAttachment[] = selectedFiles.map(
-        (file) => ({
+      const newAttachments =
+        selectedFiles.map((file) => ({
           id: crypto.randomUUID(),
           file,
-          previewUrl: URL.createObjectURL(file),
+          previewUrl:
+            URL.createObjectURL(file),
           kind: getAttachmentKind(file),
-        }),
-      );
+        }));
 
       setAttachments((current) => [
         ...current,
@@ -224,33 +265,55 @@ export function ChatInput({
   /*
    * Remove attachment and immediately release its object URL.
    */
-  const removeAttachment = useCallback((id: string) => {
-    setAttachments((current) => {
-      const attachment = current.find(
-        (item) => item.id === id,
-      );
+  const removeAttachment = useCallback(
+    (id: string) => {
+      setAttachments((current) => {
+        const attachment =
+          current.find(
+            (item) => item.id === id,
+          );
 
-      if (attachment) {
-        URL.revokeObjectURL(attachment.previewUrl);
-      }
+        if (attachment) {
+          URL.revokeObjectURL(
+            attachment.previewUrl,
+          );
+        }
 
-      return current.filter(
-        (item) => item.id !== id,
-      );
-    });
-  }, []);
+        return current.filter(
+          (item) => item.id !== id,
+        );
+      });
+    },
+    [],
+  );
 
   /*
    * Send message.
+   *
+   * TEMPORARY DIAGNOSTIC:
+   * The alert below confirms whether the ChatInput send
+   * handler is actually being reached.
    */
   const handleSend = useCallback(() => {
+    alert(
+      `CHAT INPUT CLICKED\n\nsending: ${String(
+        sending,
+      )}\ntext: "${textRef.current}"\nattachments: ${
+        attachments.length
+      }`,
+    );
+
     if (sending) {
       return;
     }
 
-    const trimmedText = textRef.current.trim();
+    const trimmedText =
+      textRef.current.trim();
 
-    if (!trimmedText && attachments.length === 0) {
+    if (
+      !trimmedText &&
+      attachments.length === 0
+    ) {
       return;
     }
 
@@ -258,11 +321,23 @@ export function ChatInput({
       speech.stop();
     }
 
+    console.log(
+      "[MassDiamond][ChatInput] Calling onSend:",
+      {
+        text: trimmedText,
+        attachmentCount:
+          attachments.length,
+      },
+    );
+
     /*
      * Parent takes ownership of the attachment objects.
      * Their object URLs must remain alive for message rendering.
      */
-    onSend(trimmedText, attachments);
+    onSend(
+      trimmedText,
+      attachments,
+    );
 
     setText("");
     setAttachments([]);
@@ -279,87 +354,115 @@ export function ChatInput({
    * Enter = send
    * Shift + Enter = newline
    */
-  const handleTextAreaKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (event.key !== "Enter" || event.shiftKey) {
-        return;
-      }
+  const handleTextAreaKeyDown =
+    useCallback(
+      (
+        event: KeyboardEvent<HTMLTextAreaElement>,
+      ) => {
+        if (
+          event.key !== "Enter" ||
+          event.shiftKey
+        ) {
+          return;
+        }
 
-      event.preventDefault();
-      handleSend();
-    },
-    [handleSend],
-  );
+        event.preventDefault();
+        handleSend();
+      },
+      [handleSend],
+    );
 
-  const attachMenuOptions: AttachmentMenuOption[] = [
-    {
-      id: "image",
-      label: t("chat.attachPhoto", "Photo"),
-      icon: ImagePlus,
-      inputRef: imageInputRef,
-      accept: "image/*",
-    },
-    {
-      id: "video",
-      label: t("chat.attachVideo", "Video"),
-      icon: Video,
-      inputRef: videoInputRef,
-      accept: "video/*",
-    },
-    {
-      id: "file",
-      label: t("chat.attachFile", "File"),
-      icon: FileText,
-      inputRef: fileInputRef,
-    },
-    {
-      id: "audio",
-      label: t("chat.attachAudio", "Audio"),
-      icon: Music,
-      inputRef: audioInputRef,
-      accept: "audio/*",
-    },
-  ];
+  const attachMenuOptions: AttachmentMenuOption[] =
+    [
+      {
+        id: "image",
+        label: t(
+          "chat.attachPhoto",
+          "Photo",
+        ),
+        icon: ImagePlus,
+        inputRef: imageInputRef,
+        accept: "image/*",
+      },
+      {
+        id: "video",
+        label: t(
+          "chat.attachVideo",
+          "Video",
+        ),
+        icon: Video,
+        inputRef: videoInputRef,
+        accept: "video/*",
+      },
+      {
+        id: "file",
+        label: t(
+          "chat.attachFile",
+          "File",
+        ),
+        icon: FileText,
+        inputRef: fileInputRef,
+      },
+      {
+        id: "audio",
+        label: t(
+          "chat.attachAudio",
+          "Audio",
+        ),
+        icon: Music,
+        inputRef: audioInputRef,
+        accept: "audio/*",
+      },
+    ];
 
-  const hasText = text.trim().length > 0;
-  const hasAttachments = attachments.length > 0;
-  const canSend = !sending && (hasText || hasAttachments);
+  const hasText =
+    text.trim().length > 0;
+  const hasAttachments =
+    attachments.length > 0;
+  const canSend =
+    !sending &&
+    (hasText || hasAttachments);
 
-  const isListening = speech.status === "listening";
-  const isSpeechError = speech.status === "error";
-  const isSpeechUnsupported = speech.status === "unsupported";
+  const isListening =
+    speech.status === "listening";
+  const isSpeechError =
+    speech.status === "error";
+  const isSpeechUnsupported =
+    speech.status === "unsupported";
 
-  const micLabel = isSpeechUnsupported
-    ? t(
-        "chat.voiceUnsupported",
-        "Voice input is not supported in this browser",
-      )
-    : isSpeechError
+  const micLabel =
+    isSpeechUnsupported
       ? t(
-          "chat.voiceError",
-          "Voice input error. Tap to try again.",
+          "chat.voiceUnsupported",
+          "Voice input is not supported in this browser",
         )
-      : isListening
+      : isSpeechError
         ? t(
-            "chat.voiceStop",
-            "Stop voice input",
+            "chat.voiceError",
+            "Voice input error. Tap to try again.",
           )
-        : t(
-            "chat.voiceStart",
-            "Start voice input",
-          );
+        : isListening
+          ? t(
+              "chat.voiceStop",
+              "Stop voice input",
+            )
+          : t(
+              "chat.voiceStart",
+              "Start voice input",
+            );
 
-  const micStatusText = isListening
-    ? t(
-        "chat.voiceListening",
-        "Listening…",
-      )
-    : isSpeechError
+  const micStatusText =
+    isListening
       ? t(
-          "chat.voiceTryAgain",
-          "Voice input is unavailable. Try again.",
+          "chat.voiceListening",
+          "Listening…",
         )
-      : null;
+      : isSpeechError
+        ? t(
+            "chat.voiceTryAgain",
+            "Voice input is unavailable. Try again.",
+          )
+        : null;
 
   return (
     <div
@@ -374,16 +477,20 @@ export function ChatInput({
             "Selected attachments",
           )}
         >
-          {attachments.map((attachment) => (
-            <AttachmentPreview
-              key={attachment.id}
-              attachment={attachment}
-              onRemove={() =>
-                removeAttachment(attachment.id)
-              }
-              disabled={sending}
-            />
-          ))}
+          {attachments.map(
+            (attachment) => (
+              <AttachmentPreview
+                key={attachment.id}
+                attachment={attachment}
+                onRemove={() =>
+                  removeAttachment(
+                    attachment.id,
+                  )
+                }
+                disabled={sending}
+              />
+            ),
+          )}
         </div>
       )}
 
@@ -458,7 +565,9 @@ export function ChatInput({
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={() =>
-              setMenuOpen((current) => !current)
+              setMenuOpen(
+                (current) => !current,
+              )
             }
             className="rounded-full p-2.5 text-text-muted transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:pointer-events-none disabled:opacity-40"
           >
@@ -466,7 +575,9 @@ export function ChatInput({
               size={20}
               aria-hidden="true"
               className={`transition-transform duration-200 ${
-                menuOpen ? "rotate-45" : ""
+                menuOpen
+                  ? "rotate-45"
+                  : ""
               }`}
             />
           </button>
@@ -502,7 +613,9 @@ export function ChatInput({
                       aria-hidden="true"
                       className="shrink-0 text-primary"
                     />
-                    <span>{label}</span>
+                    <span>
+                      {label}
+                    </span>
                   </button>
                 ),
               )}
@@ -514,7 +627,10 @@ export function ChatInput({
         <div className="relative shrink-0">
           <button
             type="button"
-            disabled={sending || !speech.isSupported}
+            disabled={
+              sending ||
+              !speech.isSupported
+            }
             onClick={speech.toggle}
             aria-label={micLabel}
             aria-pressed={isListening}
@@ -587,7 +703,9 @@ export function ChatInput({
           onChange={(event) =>
             setText(event.target.value)
           }
-          onKeyDown={handleTextAreaKeyDown}
+          onKeyDown={
+            handleTextAreaKeyDown
+          }
           rows={1}
           enterKeyHint="send"
           placeholder={t(
