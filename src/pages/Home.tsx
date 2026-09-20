@@ -74,31 +74,25 @@ export default function Home() {
   const { session } = useAuth();
 
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
-  const [conversationId, setConversationId] = useState<string>();
+  const [conversationId, setConversationId] =
+    useState<string>();
   const [sending, setSending] = useState(false);
-  const [configError, setConfigError] = useState<string | null>(null);
+  const [configError, setConfigError] =
+    useState<string | null>(null);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef =
+    useRef<HTMLDivElement>(null);
 
-  /*
-   * Synchronous lock.
-   * Prevents concurrent sends/retries from entering performSend.
-   */
   const sendingRef = useRef(false);
 
-  /*
-   * Keeps the latest conversation id available to async callbacks
-   * without relying on a potentially stale render snapshot.
-   */
-  const conversationIdRef = useRef<string | undefined>(undefined);
+  const conversationIdRef =
+    useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    conversationIdRef.current = conversationId;
+    conversationIdRef.current =
+      conversationId;
   }, [conversationId]);
 
-  /*
-   * Scroll to the newest message or typing indicator.
-   */
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({
       behavior: "smooth",
@@ -106,13 +100,6 @@ export default function Home() {
     });
   }, [messages, sending]);
 
-  /*
-   * Upload selected attachments.
-   *
-   * The current ai-chat contract accepts one attachment_url,
-   * so every file is uploaded but only the first successful
-   * public URL is forwarded to the backend.
-   */
   const uploadAttachments = useCallback(
     async (
       attachments: ChatAttachment[],
@@ -128,7 +115,9 @@ export default function Home() {
       }
 
       if (!session) {
-        throw new Error("User session is not available.");
+        throw new Error(
+          "User session is not available.",
+        );
       }
 
       const results = await Promise.all(
@@ -141,19 +130,24 @@ export default function Home() {
 
           const path = `${session.user.id}/${crypto.randomUUID()}-${safeName}`;
 
-          const { error } = await supabase.storage
-            .from("chat-attachments")
-            .upload(path, attachment.file, {
-              cacheControl: "3600",
-              upsert: false,
-              contentType:
-                attachment.file.type || undefined,
-            });
+          const { error } =
+            await supabase.storage
+              .from("chat-attachments")
+              .upload(
+                path,
+                attachment.file,
+                {
+                  cacheControl: "3600",
+                  upsert: false,
+                  contentType:
+                    attachment.file.type ||
+                    undefined,
+                },
+              );
 
           if (error) {
             console.error(
-              "Attachment upload failed:",
-              attachment.file.name,
+              "[MassDiamond][Attachment] Upload failed:",
               error,
             );
 
@@ -163,9 +157,10 @@ export default function Home() {
             };
           }
 
-          const { data } = supabase.storage
-            .from("chat-attachments")
-            .getPublicUrl(path);
+          const { data } =
+            supabase.storage
+              .from("chat-attachments")
+              .getPublicUrl(path);
 
           return {
             url: data.publicUrl,
@@ -182,7 +177,8 @@ export default function Home() {
             url: string;
             failed: false;
           } =>
-            Boolean(result.url) && !result.failed,
+            Boolean(result.url) &&
+            !result.failed,
         )?.url,
         failedCount: results.filter(
           (result) => result.failed,
@@ -192,16 +188,6 @@ export default function Home() {
     [session],
   );
 
-  /*
-   * Complete send pipeline for one existing user message.
-   *
-   * 1. Acquire synchronous send lock.
-   * 2. Upload attachments.
-   * 3. Invoke ai-chat.
-   * 4. Mark the exact user message as sent/error.
-   * 5. Append exactly one assistant response.
-   * 6. Release the lock in finally.
-   */
   const performSend = useCallback(
     async (
       messageId: string,
@@ -209,6 +195,10 @@ export default function Home() {
       attachments: ChatAttachment[],
     ): Promise<SendResult> => {
       if (sendingRef.current) {
+        console.warn(
+          "[MassDiamond][Chat] Send blocked: already sending.",
+        );
+
         return {
           ok: false,
         };
@@ -219,30 +209,75 @@ export default function Home() {
       setConfigError(null);
 
       try {
-        let attachmentUrl: string | undefined;
+        console.log(
+          "[MassDiamond][Chat] Starting send:",
+          {
+            messageId,
+            text,
+            hasSession: Boolean(session),
+            userId: session?.user?.id ?? null,
+            conversationId:
+              conversationIdRef.current ??
+              null,
+            attachmentCount:
+              attachments.length,
+          },
+        );
+
+        let attachmentUrl:
+          | string
+          | undefined;
 
         if (attachments.length > 0) {
           const uploadResult =
-            await uploadAttachments(attachments);
+            await uploadAttachments(
+              attachments,
+            );
 
-          attachmentUrl = uploadResult.firstUrl;
+          attachmentUrl =
+            uploadResult.firstUrl;
+
+          console.log(
+            "[MassDiamond][Chat] Attachments processed:",
+            {
+              firstUrl:
+                attachmentUrl ?? null,
+              failedCount:
+                uploadResult.failedCount,
+            },
+          );
         }
+
+        const requestBody = {
+          conversation_id:
+            conversationIdRef.current,
+          message: text,
+          language:
+            detectMessageLanguage(text),
+          attachment_url:
+            attachmentUrl,
+        };
+
+        console.log(
+          "[MassDiamond][Chat] Calling ai-chat:",
+          requestBody,
+        );
 
         const { data, error } =
           await supabase.functions.invoke(
             "ai-chat",
             {
-              body: {
-                conversation_id:
-                  conversationIdRef.current,
-                message: text,
-                language:
-                  detectMessageLanguage(text),
-                attachment_url:
-                  attachmentUrl,
-              },
+              body: requestBody,
             },
           );
+
+        console.log(
+          "[MassDiamond][Chat] ai-chat returned:",
+          {
+            data,
+            error,
+          },
+        );
 
         if (error) {
           throw error;
@@ -259,7 +294,8 @@ export default function Home() {
           "CONFIGURATION_REQUIRED"
         ) {
           const message =
-            typeof data.message === "string"
+            typeof data.message ===
+            "string"
               ? data.message
               : "AI service configuration is required.";
 
@@ -283,38 +319,37 @@ export default function Home() {
           };
         }
 
-        /*
-         * ai-chat returns the assistant response
-         * in `content`.
-         */
-        if (typeof data.content !== "string") {
+        if (
+          typeof data.content !== "string"
+        ) {
           throw new Error(
             "Invalid response: assistant content is missing.",
           );
         }
 
-        /*
-         * ai-chat returns the conversation id
-         * in camelCase as `conversationId`.
-         */
         const nextConversationId =
-          typeof data.conversationId === "string"
+          typeof data.conversationId ===
+          "string"
             ? data.conversationId
             : conversationIdRef.current;
 
         conversationIdRef.current =
           nextConversationId;
 
-        setConversationId(nextConversationId);
+        setConversationId(
+          nextConversationId,
+        );
 
         setMessages((current) => {
-          const updated = current.map((item) =>
-            item.id === messageId
-              ? {
-                  ...item,
-                  status: "sent" as const,
-                }
-              : item,
+          const updated = current.map(
+            (item) =>
+              item.id === messageId
+                ? {
+                    ...item,
+                    status:
+                      "sent" as const,
+                  }
+                : item,
           );
 
           return [
@@ -345,7 +380,7 @@ export default function Home() {
         };
       } catch (error) {
         console.error(
-          "Chat send failed:",
+          "[MassDiamond][Chat] Send failed:",
           error,
         );
 
@@ -367,14 +402,18 @@ export default function Home() {
       } finally {
         sendingRef.current = false;
         setSending(false);
+
+        console.log(
+          "[MassDiamond][Chat] Send finished.",
+        );
       }
     },
-    [uploadAttachments],
+    [
+      session,
+      uploadAttachments,
+    ],
   );
 
-  /*
-   * Initial message send.
-   */
   const handleSend = useCallback(
     (
       text: string,
@@ -384,7 +423,8 @@ export default function Home() {
         return;
       }
 
-      const trimmedText = text.trim();
+      const trimmedText =
+        text.trim();
 
       if (
         !trimmedText &&
@@ -393,7 +433,8 @@ export default function Home() {
         return;
       }
 
-      const messageId = crypto.randomUUID();
+      const messageId =
+        crypto.randomUUID();
 
       setMessages((current) => [
         ...current,
@@ -415,9 +456,6 @@ export default function Home() {
     [performSend],
   );
 
-  /*
-   * Retry the exact failed user message.
-   */
   const retryMessage = useCallback(
     (messageId: string) => {
       if (sendingRef.current) {
@@ -425,7 +463,8 @@ export default function Home() {
       }
 
       const message = messages.find(
-        (item) => item.id === messageId,
+        (item) =>
+          item.id === messageId,
       );
 
       if (
@@ -472,9 +511,6 @@ export default function Home() {
     [navigate],
   );
 
-  /*
-   * Supabase configuration guard.
-   */
   if (!isSupabaseConfigured) {
     return (
       <div className="flex min-h-[70vh] flex-col items-center justify-center px-4">
@@ -485,9 +521,6 @@ export default function Home() {
     );
   }
 
-  /*
-   * Empty state / first screen.
-   */
   if (messages.length === 0) {
     return (
       <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-0">
@@ -525,7 +558,9 @@ export default function Home() {
                     className="text-primary"
                     aria-hidden="true"
                   />
-                  <span>{t(key)}</span>
+                  <span>
+                    {t(key)}
+                  </span>
                 </button>
               ),
             )}
@@ -535,9 +570,6 @@ export default function Home() {
     );
   }
 
-  /*
-   * Active conversation.
-   */
   return (
     <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-0">
       <div className="flex-1 space-y-4 overflow-y-auto py-6 pb-32">
@@ -553,10 +585,14 @@ export default function Home() {
           />
         ))}
 
-        {sending && <TypingIndicator />}
+        {sending && (
+          <TypingIndicator />
+        )}
 
         {configError && (
-          <ConfigRequired label={configError} />
+          <ConfigRequired
+            label={configError}
+          />
         )}
 
         <div ref={messagesEndRef} />
