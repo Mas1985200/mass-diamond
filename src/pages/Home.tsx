@@ -11,7 +11,10 @@ import {
 
 import { Logo } from "@/components/Logo";
 import { ChatInput } from "@/components/ChatInput";
-import { ChatMessage, type DisplayMessage } from "@/components/ChatMessage";
+import {
+  ChatMessage,
+  type DisplayMessage,
+} from "@/components/ChatMessage";
 import { TypingIndicator } from "@/components/TypingIndicator";
 import { ConfigRequired } from "@/components/States";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
@@ -78,15 +81,14 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   /*
-   * This ref is deliberately used only as a synchronous lock.
-   * Unlike React state, ref mutation is immediate, which prevents
-   * two sends/retries from entering performSend at the same time.
+   * Synchronous lock.
+   * Prevents concurrent sends/retries from entering performSend.
    */
   const sendingRef = useRef(false);
 
   /*
-   * Keep the latest conversation id available to async callbacks
-   * without making the send pipeline depend on a stale render snapshot.
+   * Keeps the latest conversation id available to async callbacks
+   * without relying on a potentially stale render snapshot.
    */
   const conversationIdRef = useRef<string | undefined>(undefined);
 
@@ -105,11 +107,11 @@ export default function Home() {
   }, [messages, sending]);
 
   /*
-   * Upload every selected attachment.
+   * Upload selected attachments.
    *
-   * The current backend contract still accepts only one attachment_url,
-   * so every file is uploaded, but only the first successful public URL
-   * is forwarded to ai-chat.
+   * The current ai-chat contract accepts one attachment_url,
+   * so every file is uploaded but only the first successful
+   * public URL is forwarded to the backend.
    */
   const uploadAttachments = useCallback(
     async (
@@ -132,8 +134,10 @@ export default function Home() {
       const results = await Promise.all(
         attachments.map(async (attachment) => {
           const safeName =
-            attachment.file.name.replace(/[^\w.\-() ]+/g, "_") ||
-            "attachment";
+            attachment.file.name.replace(
+              /[^\w.\-() ]+/g,
+              "_",
+            ) || "attachment";
 
           const path = `${session.user.id}/${crypto.randomUUID()}-${safeName}`;
 
@@ -142,7 +146,8 @@ export default function Home() {
             .upload(path, attachment.file, {
               cacheControl: "3600",
               upsert: false,
-              contentType: attachment.file.type || undefined,
+              contentType:
+                attachment.file.type || undefined,
             });
 
           if (error) {
@@ -171,19 +176,25 @@ export default function Home() {
 
       return {
         firstUrl: results.find(
-          (result): result is { url: string; failed: false } =>
+          (
+            result,
+          ): result is {
+            url: string;
+            failed: false;
+          } =>
             Boolean(result.url) && !result.failed,
         )?.url,
-        failedCount: results.filter((result) => result.failed).length,
+        failedCount: results.filter(
+          (result) => result.failed,
+        ).length,
       };
     },
     [session],
   );
 
   /*
-   * Performs the complete send pipeline for one existing user message.
+   * Complete send pipeline for one existing user message.
    *
-   * Responsibilities:
    * 1. Acquire synchronous send lock.
    * 2. Upload attachments.
    * 3. Invoke ai-chat.
@@ -211,38 +222,42 @@ export default function Home() {
         let attachmentUrl: string | undefined;
 
         if (attachments.length > 0) {
-          const uploadResult = await uploadAttachments(attachments);
+          const uploadResult =
+            await uploadAttachments(attachments);
 
           attachmentUrl = uploadResult.firstUrl;
-
-          /*
-           * Do not block the entire message if one attachment fails.
-           * The current backend contract only needs the first successful
-           * attachment URL.
-           */
         }
 
-        const { data, error } = await supabase.functions.invoke(
-          "ai-chat",
-          {
-            body: {
-              conversation_id: conversationIdRef.current,
-              message: text,
-              language: detectMessageLanguage(text),
-              attachment_url: attachmentUrl,
+        const { data, error } =
+          await supabase.functions.invoke(
+            "ai-chat",
+            {
+              body: {
+                conversation_id:
+                  conversationIdRef.current,
+                message: text,
+                language:
+                  detectMessageLanguage(text),
+                attachment_url:
+                  attachmentUrl,
+              },
             },
-          },
-        );
+          );
 
         if (error) {
           throw error;
         }
 
         if (!data) {
-          throw new Error("Empty response received from ai-chat.");
+          throw new Error(
+            "Empty response received from ai-chat.",
+          );
         }
 
-        if (data.status === "CONFIGURATION_REQUIRED") {
+        if (
+          data.status ===
+          "CONFIGURATION_REQUIRED"
+        ) {
           const message =
             typeof data.message === "string"
               ? data.message
@@ -268,16 +283,28 @@ export default function Home() {
           };
         }
 
-        if (typeof data.reply !== "string") {
-          throw new Error("Invalid response: assistant reply is missing.");
+        /*
+         * ai-chat returns the assistant response
+         * in `content`.
+         */
+        if (typeof data.content !== "string") {
+          throw new Error(
+            "Invalid response: assistant content is missing.",
+          );
         }
 
+        /*
+         * ai-chat returns the conversation id
+         * in camelCase as `conversationId`.
+         */
         const nextConversationId =
-          typeof data.conversation_id === "string"
-            ? data.conversation_id
+          typeof data.conversationId === "string"
+            ? data.conversationId
             : conversationIdRef.current;
 
-        conversationIdRef.current = nextConversationId;
+        conversationIdRef.current =
+          nextConversationId;
+
         setConversationId(nextConversationId);
 
         setMessages((current) => {
@@ -295,9 +322,10 @@ export default function Home() {
             {
               id: crypto.randomUUID(),
               role: "assistant" as const,
-              content: data.reply,
+              content: data.content,
               capability:
-                typeof data.capability === "string"
+                typeof data.capability ===
+                "string"
                   ? data.capability
                   : undefined,
             },
@@ -306,15 +334,20 @@ export default function Home() {
 
         return {
           ok: true,
-          conversationId: nextConversationId,
-          reply: data.reply,
+          conversationId:
+            nextConversationId,
+          reply: data.content,
           capability:
-            typeof data.capability === "string"
+            typeof data.capability ===
+            "string"
               ? data.capability
               : undefined,
         };
       } catch (error) {
-        console.error("Chat send failed:", error);
+        console.error(
+          "Chat send failed:",
+          error,
+        );
 
         setMessages((current) =>
           current.map((item) =>
@@ -343,23 +376,25 @@ export default function Home() {
    * Initial message send.
    */
   const handleSend = useCallback(
-    (text: string, attachments: ChatAttachment[]) => {
+    (
+      text: string,
+      attachments: ChatAttachment[],
+    ) => {
       if (sendingRef.current) {
         return;
       }
 
       const trimmedText = text.trim();
 
-      if (!trimmedText && attachments.length === 0) {
+      if (
+        !trimmedText &&
+        attachments.length === 0
+      ) {
         return;
       }
 
       const messageId = crypto.randomUUID();
 
-      /*
-       * The exact ChatAttachment objects are stored directly.
-       * No reconstruction means previewUrl/File references remain stable.
-       */
       setMessages((current) => [
         ...current,
         {
@@ -371,16 +406,17 @@ export default function Home() {
         },
       ]);
 
-      void performSend(messageId, trimmedText, attachments);
+      void performSend(
+        messageId,
+        trimmedText,
+        attachments,
+      );
     },
     [performSend],
   );
 
   /*
-   * Retry the exact failed message.
-   *
-   * The original ChatAttachment objects are reused so the same File
-   * objects and preview URLs remain available.
+   * Retry the exact failed user message.
    */
   const retryMessage = useCallback(
     (messageId: string) => {
@@ -392,7 +428,10 @@ export default function Home() {
         (item) => item.id === messageId,
       );
 
-      if (!message || message.role !== "user") {
+      if (
+        !message ||
+        message.role !== "user"
+      ) {
         return;
       }
 
@@ -417,8 +456,14 @@ export default function Home() {
   );
 
   const openCapability = useCallback(
-    (capability: Exclude<Capability, "GENERAL_CHAT">) => {
-      const route = CAPABILITY_ROUTES[capability];
+    (
+      capability: Exclude<
+        Capability,
+        "GENERAL_CHAT"
+      >,
+    ) => {
+      const route =
+        CAPABILITY_ROUTES[capability];
 
       if (route) {
         navigate(route);
@@ -445,7 +490,7 @@ export default function Home() {
    */
   if (messages.length === 0) {
     return (
-      <div className="flex min-h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-0 mx-auto">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-0">
         <div className="flex flex-1 flex-col items-center justify-center gap-6 py-12">
           <Logo size={88} />
 
@@ -462,16 +507,23 @@ export default function Home() {
 
           <div className="grid w-full max-w-md grid-cols-2 gap-3">
             {capabilityButtons.map(
-              ({ key, icon: Icon, route }) => (
+              ({
+                key,
+                icon: Icon,
+                route,
+              }) => (
                 <button
                   key={key}
                   type="button"
-                  onClick={() => navigate(route)}
+                  onClick={() =>
+                    navigate(route)
+                  }
                   className="md-panel flex items-center gap-2 px-4 py-3 text-sm transition-colors hover:border-primary/50"
                 >
                   <Icon
                     size={18}
                     className="text-primary"
+                    aria-hidden="true"
                   />
                   <span>{t(key)}</span>
                 </button>
@@ -487,13 +539,15 @@ export default function Home() {
    * Active conversation.
    */
   return (
-    <div className="flex min-h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-0 mx-auto">
+    <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-0">
       <div className="flex-1 space-y-4 overflow-y-auto py-6 pb-32">
         {messages.map((message) => (
           <ChatMessage
             key={message.id}
             message={message}
-            onOpenCapability={openCapability}
+            onOpenCapability={
+              openCapability
+            }
             onRetry={retryMessage}
             sending={sending}
           />
